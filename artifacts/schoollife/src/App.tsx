@@ -150,11 +150,14 @@ function DashboardApp() {
   const [groupSelection, setGroupSelection] = useState<string[]>(['Class 6A Parents', 'Greenwood Sports']);
   const [calendarEvents, setCalendarEvents] = useState<EventItem[]>(events);
   const [calendarSyncing, setCalendarSyncing] = useState(false);
+  const [inboxMessages, setInboxMessages] = useState<Message[]>(messages);
+  const [gmailSyncing, setGmailSyncing] = useState(false);
 
   const activeChild = children.find((child) => child.id === selectedChild) ?? children[0];
   useEffect(() => {
     void fetch('/api/me', { credentials: 'include' });
     void syncCalendar();
+    void syncGmail();
   }, []);
 
   const syncCalendar = async () => {
@@ -186,6 +189,31 @@ function DashboardApp() {
       setCalendarSyncing(false);
     }
   };
+  const syncGmail = async () => {
+    setGmailSyncing(true);
+    try {
+      const response = await fetch('/api/gmail/messages?pageSize=30', { credentials: 'include' });
+      if (!response.ok) throw new Error('Gmail sync failed');
+      const payload = (await response.json()) as { items?: Array<{ id: string; sender: string; subject: string; snippet: string; date: string; category: string; needsAction: boolean }> };
+      const liveMessages = (payload.items ?? []).map((message, index) => ({
+        id: message.id || `gmail-${index}`,
+        sender: message.sender,
+        snippet: message.snippet,
+        summary: message.subject,
+        detected: `${message.category} · ${new Date(message.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}`,
+        category: message.category,
+        needsAction: message.needsAction,
+        childId: 'aarav',
+      } satisfies Message));
+      if (liveMessages.length > 0) setInboxMessages(liveMessages);
+      setSources((current) => current.map((source) => source.id === 'email' ? { ...source, status: 'Connected', detail: `${liveMessages.length} recent emails`, lastSync: 'Synced just now' } : source));
+      notify(liveMessages.length > 0 ? `${liveMessages.length} Gmail threads synced` : 'Gmail is connected');
+    } catch {
+      notify('Gmail sync needs attention');
+    } finally {
+      setGmailSyncing(false);
+    }
+  };
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 2800);
@@ -208,11 +236,11 @@ function DashboardApp() {
     if (view === 'home') return <HomeView tasks={tasks} activeChild={activeChild} onOpenScience={() => setModal('science')} onOpenTask={setDetailTask} onAddTask={addTask} onAsk={() => setModal('assistant')} onView={(next) => setView(next)} />;
     if (view === 'plan') return <PlanView tasks={tasks} selectedChild={selectedChild} tab={planTab} setTab={setPlanTab} filter={planFilter} setFilter={setPlanFilter} onComplete={completeTask} onOpenTask={setDetailTask} onAsk={() => setModal('assistant')} />;
     if (view === 'calendar') return <CalendarView selectedChild={selectedChild} eventsData={calendarEvents} mode={calendarMode} setMode={setCalendarMode} child={calendarChild} setChild={setCalendarChild} onOpenEvent={setDetailEvent} />;
-    if (view === 'inbox') return <InboxView filter={inboxFilter} setFilter={setInboxFilter} onOpenScience={() => setModal('science')} onAddTask={addTask} />;
-    if (view === 'sources') return <SourcesView sources={sources} onSwitch={switchSource} onSyncCalendar={syncCalendar} calendarSyncing={calendarSyncing} onWhatsApp={() => setModal('whatsapp')} onNotify={notify} />;
+    if (view === 'inbox') return <InboxView messagesData={inboxMessages} gmailSyncing={gmailSyncing} onSyncGmail={syncGmail} filter={inboxFilter} setFilter={setInboxFilter} onOpenScience={() => setModal('science')} onAddTask={addTask} />;
+    if (view === 'sources') return <SourcesView sources={sources} onSwitch={switchSource} onSyncCalendar={syncCalendar} calendarSyncing={calendarSyncing} onSyncGmail={syncGmail} gmailSyncing={gmailSyncing} onWhatsApp={() => setModal('whatsapp')} onNotify={notify} />;
     if (view === 'profile') return <ProfileView child={activeChild} tasks={tasks} eventsData={calendarEvents} onSelect={setSelectedChild} onOpenTask={setDetailTask} onAdd={() => { setOnboardingStep(1); setModal('onboarding'); }} onNotify={notify} />;
     return <SettingsView onNotify={notify} onOpenPrivacy={() => setModal('privacy')} onSources={() => setView('sources')} onOnboarding={() => { setOnboardingStep(0); setModal('onboarding'); }} />;
-  }, [activeChild, calendarChild, calendarMode, inboxFilter, planFilter, planTab, selectedChild, sources, tasks, view]);
+  }, [activeChild, calendarChild, calendarMode, gmailSyncing, inboxFilter, inboxMessages, inboxFilter, planFilter, planTab, selectedChild, sources, tasks, view]);
 
   return (
     <div className="sl-app">
@@ -301,18 +329,30 @@ function EventRow({ event, onOpen }: { event: EventItem; onOpen: (event: EventIt
   return <button className="sl-event-row" data-testid={`button-event-${event.id}`} onClick={() => onOpen(event)}><span className="sl-event-date">{event.date.replace('Sep ', '')}<small>SEP</small></span><span className="sl-event-line"></span><span className="sl-event-copy"><strong>{event.title}</strong><small>{event.time} · {event.childId === 'aarav' ? 'Aarav' : 'Emma'} · {event.source}</small></span><ChevronRight size={17} /></button>;
 }
 
-function InboxView({ filter, setFilter, onOpenScience, onAddTask }: { filter: string; setFilter: (v: string) => void; onOpenScience: () => void; onAddTask: (id: string) => void }) {
+function InboxView({ messagesData, gmailSyncing, onSyncGmail, filter, setFilter, onOpenScience, onAddTask }: { messagesData: Message[]; gmailSyncing: boolean; onSyncGmail: () => void; filter: string; setFilter: (v: string) => void; onOpenScience: () => void; onAddTask: (id: string) => void }) {
   const filters = ['All', 'Needs Action', 'Events', 'Payments', 'Homework', 'Announcements'];
-  const shown = messages.filter((message) => filter === 'All' || (filter === 'Needs Action' ? message.needsAction : message.category === filter));
-  return <div><PageHeader eyebrow="The noise, resolved" title="Inbox" description="12 new school-related items, translated into what matters." action={<button className="sl-secondary-button" data-testid="button-mark-read" onClick={() => {}}><Check size={15} /> Mark all read</button>} /><div className="sl-filter-row inbox-filters">{filters.map((item) => <button key={item} className={filter === item ? 'selected' : ''} data-testid={`button-inbox-filter-${item.toLowerCase().replace(' ', '-')}`} onClick={() => setFilter(item)}>{item}{item === 'Needs Action' && <span className="filter-count">4</span>}</button>)}</div><div className="sl-inbox-list">{shown.map((message) => <MessageCard message={message} key={message.id} onOpen={message.id === 'm1' ? onOpenScience : () => {}} onAdd={() => onAddTask(message.id === 'm1' ? 'science' : message.id === 'm2' ? 'trip-fee' : 'permission')} />)}</div></div>;
+  const shown = messagesData.filter((message) => filter === 'All' || (filter === 'Needs Action' ? message.needsAction : message.category === filter));
+  return <div><PageHeader eyebrow="The noise, resolved" title="Inbox" description={`${messagesData.length} recent school-related items, translated into what matters.`} action={<div className="sl-page-actions"><button className="sl-secondary-button" data-testid="button-sync-gmail" onClick={onSyncGmail}><RefreshCw size={15} className={gmailSyncing ? 'sl-spin' : ''} /> {gmailSyncing ? 'Syncing…' : 'Sync Gmail'}</button><button className="sl-secondary-button" data-testid="button-mark-read" onClick={() => {}}><Check size={15} /> Mark all read</button></div>} /><div className="sl-filter-row inbox-filters">{filters.map((item) => <button key={item} className={filter === item ? 'selected' : ''} data-testid={`button-inbox-filter-${item.toLowerCase().replace(' ', '-')}`} onClick={() => setFilter(item)}>{item}{item === 'Needs Action' && <span className="filter-count">{messagesData.filter((message) => message.needsAction).length}</span>}</button>)}</div><div className="sl-inbox-list">{shown.map((message) => <MessageCard message={message} key={message.id} onOpen={message.id === 'm1' ? onOpenScience : () => {}} onAdd={() => onAddTask(message.id === 'm1' ? 'science' : message.id === 'm2' ? 'trip-fee' : 'permission')} />)}</div>{shown.length === 0 && <div className="sl-empty-state"><Mail size={20} /><strong>No {filter.toLowerCase()} items yet</strong><span>Try another filter or sync Gmail again.</span></div>}</div>;
 }
 
 function MessageCard({ message, onOpen, onAdd }: { message: Message; onOpen: () => void; onAdd: () => void }) {
   return <article className="sl-message-card" data-testid={`card-message-${message.id}`}><div className="sl-message-top"><span className={`sl-source-icon ${message.sender.includes('WhatsApp') || message.sender.includes('Parents') ? 'whatsapp' : message.sender.includes('Teacher') ? 'teacher' : 'school'}`}>{message.sender.includes('Parents') ? <MessageCircle size={15} /> : message.sender.includes('Teacher') ? <GraduationCap size={15} /> : <Mail size={15} />}</span><div><strong>{message.sender}</strong><small>Today · 09:18 AM</small></div>{message.needsAction && <span className="sl-action-badge">Needs action</span>}<button className="sl-more" data-testid={`button-message-more-${message.id}`} onClick={() => {}}><MoreHorizontal size={17} /></button></div><p className="sl-snippet">“{message.snippet}”</p><div className="sl-ai-summary"><span><Sparkles size={14} /> SchoolLife understood</span><strong>{message.summary}</strong><small><Tag size={13} /> {message.detected}</small></div><div className="sl-message-actions"><button className="sl-text-button" data-testid={`button-view-message-${message.id}`} onClick={onOpen}>View original <ChevronRight size={14} /></button>{message.needsAction && <button className="sl-secondary-button compact" data-testid={`button-add-message-${message.id}`} onClick={onAdd}><Plus size={14} /> Add to plan</button>}</div></article>;
 }
 
-function SourcesView({ sources, onSwitch, onSyncCalendar, calendarSyncing, onWhatsApp, onNotify }: { sources: Source[]; onSwitch: (id: string) => void; onSyncCalendar: () => void; calendarSyncing: boolean; onWhatsApp: () => void; onNotify: (msg: string) => void }) {
-  return <div><PageHeader eyebrow="Your connections" title="Sources" description="SchoolLife brings everything together without taking control away." action={<button className="sl-primary-button" data-testid="button-sync-all" onClick={() => { onSyncCalendar(); onNotify('Syncing connected sources'); }}><RefreshCw size={15} /> Sync all</button>} /><div className="sl-trust-banner"><span className="sl-trust-icon"><ShieldCheck size={19} /></span><div><strong>You control what SchoolLife can access.</strong><p>Change permissions or disconnect a source any time. We only process what you choose to share.</p></div><button data-testid="button-source-permissions" onClick={() => onNotify('Permissions are up to date')}>Manage permissions</button></div><div className="sl-source-list">{sources.map((source) => <div className="sl-source-row" key={source.id} data-testid={`row-source-${source.id}`}><span className={`sl-source-logo source-${source.id}`}>{source.id === 'email' ? <Mail size={19} /> : source.id === 'whatsapp' ? <MessageCircle size={19} /> : source.id === 'apps' ? <Zap size={19} /> : source.id === 'calendar' ? <CalendarDays size={19} /> : <FileText size={19} />}</span><div className="sl-source-info"><strong>{source.name}</strong><span>{source.detail}</span><small>{source.lastSync}</small></div><span className={`sl-connected ${source.status === 'Connected' ? 'yes' : ''}`}><span></span>{source.status}</span>{source.id === 'whatsapp' && source.status === 'Connected' ? <button className="sl-secondary-button compact" data-testid="button-manage-whatsapp" onClick={onWhatsApp}>Manage</button> : <button className="sl-secondary-button compact" data-testid={`button-source-${source.status === 'Connected' ? 'disconnect' : 'connect'}-${source.id}`} onClick={() => source.id === 'calendar' && source.status !== 'Connected' ? onSyncCalendar() : onSwitch(source.id)}>{calendarSyncing && source.id === 'calendar' ? 'Syncing…' : source.status === 'Connected' ? 'Disconnect' : 'Connect'}</button>}{source.status === 'Connected' && source.id !== 'whatsapp' && <button className="sl-source-sync" data-testid={`button-sync-${source.id}`} onClick={() => source.id === 'calendar' ? onSyncCalendar() : onNotify(`${source.name} synced just now`)}><RefreshCw size={15} /></button>}</div>)}</div><div className="sl-docs-note"><Paperclip size={16} /><span><strong>Documents</strong> can process school PDFs, timetables, and circulars. You’ll see a summary before anything is added to your plan.</span></div></div>;
+function SourcesView({ sources, onSwitch, onSyncCalendar, calendarSyncing, onSyncGmail, gmailSyncing, onWhatsApp, onNotify }: { sources: Source[]; onSwitch: (id: string) => void; onSyncCalendar: () => void; calendarSyncing: boolean; onSyncGmail: () => void; gmailSyncing: boolean; onWhatsApp: () => void; onNotify: (msg: string) => void }) {
+  const syncSource = (source: Source) => {
+    if (source.id === 'calendar') return onSyncCalendar();
+    if (source.id === 'email') return onSyncGmail();
+    onNotify(`${source.name} synced just now`);
+  };
+  const connectSource = (source: Source) => {
+    if (source.status === 'Connected') return onSwitch(source.id);
+    if (source.id === 'calendar') return onSyncCalendar();
+    if (source.id === 'email') return onSyncGmail();
+    onSwitch(source.id);
+  };
+
+  return <div><PageHeader eyebrow="Your connections" title="Sources" description="SchoolLife brings everything together without taking control away." action={<button className="sl-primary-button" data-testid="button-sync-all" onClick={() => { onSyncCalendar(); onSyncGmail(); onNotify('Syncing connected sources'); }}><RefreshCw size={15} /> Sync all</button>} /><div className="sl-trust-banner"><span className="sl-trust-icon"><ShieldCheck size={19} /></span><div><strong>You control what SchoolLife can access.</strong><p>Change permissions or disconnect a source any time. We only process what you choose to share.</p></div><button data-testid="button-source-permissions" onClick={() => onNotify('Permissions are up to date')}>Manage permissions</button></div><div className="sl-source-list">{sources.map((source) => <div className="sl-source-row" key={source.id} data-testid={`row-source-${source.id}`}><span className={`sl-source-logo source-${source.id}`}>{source.id === 'email' ? <Mail size={19} /> : source.id === 'whatsapp' ? <MessageCircle size={19} /> : source.id === 'apps' ? <Zap size={19} /> : source.id === 'calendar' ? <CalendarDays size={19} /> : <FileText size={19} />}</span><div className="sl-source-info"><strong>{source.name}</strong><span>{source.detail}</span><small>{source.lastSync}</small></div><span className={`sl-connected ${source.status === 'Connected' ? 'yes' : ''}`}><span></span>{source.status}</span>{source.id === 'whatsapp' && source.status === 'Connected' ? <button className="sl-secondary-button compact" data-testid="button-manage-whatsapp" onClick={onWhatsApp}>Manage</button> : <button className="sl-secondary-button compact" data-testid={`button-source-${source.status === 'Connected' ? 'disconnect' : 'connect'}-${source.id}`} onClick={() => connectSource(source)}>{(calendarSyncing && source.id === 'calendar') || (gmailSyncing && source.id === 'email') ? 'Syncing…' : source.status === 'Connected' ? 'Disconnect' : 'Sync'}</button>}{source.status === 'Connected' && source.id !== 'whatsapp' && <button className="sl-source-sync" data-testid={`button-sync-${source.id}`} onClick={() => syncSource(source)}><RefreshCw size={15} className={(calendarSyncing && source.id === 'calendar') || (gmailSyncing && source.id === 'email') ? 'sl-spin' : ''} /></button>}</div>)}</div><div className="sl-docs-note"><Paperclip size={16} /><span><strong>Documents</strong> can process school PDFs, timetables, and circulars. You’ll see a summary before anything is added to your plan.</span></div></div>;
 }
 
 function ProfileView({ child, tasks, eventsData, onSelect, onOpenTask, onAdd, onNotify }: { child: Child; tasks: Task[]; eventsData: EventItem[]; onSelect: (id: ChildId) => void; onOpenTask: (task: Task) => void; onAdd: () => void; onNotify: (message: string) => void }) {

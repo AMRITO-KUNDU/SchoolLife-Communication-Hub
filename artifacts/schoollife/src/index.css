@@ -837,6 +837,21 @@
   }
 }
 
+.sl-page-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sl-spin {
+  animation: sl-spin 0.9s linear infinite;
+}
+
+@keyframes sl-spin {
+  to { transform: rotate(360deg); }
+}
+
 :root {
   --sl-ink: #242633;
   --sl-soft-ink: #626676;
