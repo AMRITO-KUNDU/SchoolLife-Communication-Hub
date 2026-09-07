@@ -1,4 +1,8 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ClerkProvider, SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/react';
+import { publishableKeyFromHost } from '@clerk/react/internal';
+import { shadcn } from '@clerk/themes';
+import { Redirect, Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
 import {
   Bell, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
   Circle, ClipboardCheck, Clock3, FileText, Filter, GraduationCap, Inbox as InboxIcon,
@@ -69,7 +73,66 @@ function IconText({ icon: Icon, children }: { icon: typeof Check; children: Reac
   return <span className="inline-flex items-center gap-2"><Icon size={15} strokeWidth={1.8} />{children}</span>;
 }
 
-function App() {
+const clerkPubKey = publishableKeyFromHost(
+  window.location.hostname,
+  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
+);
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+const clerkAppearance = {
+  theme: shadcn,
+  cssLayerName: 'clerk',
+  options: {
+    logoPlacement: 'inside' as const,
+    logoLinkUrl: basePath || '/',
+    logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+  },
+  variables: {
+    colorPrimary: '#5148B8',
+    colorForeground: '#20212B',
+    colorMutedForeground: '#737482',
+    colorDanger: '#C44B55',
+    colorBackground: '#FFFEFC',
+    colorInput: '#F8F7F3',
+    colorInputForeground: '#20212B',
+    colorNeutral: '#E5E3DE',
+    fontFamily: 'DM Sans, sans-serif',
+    borderRadius: '0.9rem',
+  },
+  elements: {
+    rootBox: 'w-full flex justify-center',
+    cardBox: 'bg-[#FFFEFC] rounded-2xl w-[440px] max-w-full overflow-hidden',
+    card: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    footer: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    headerTitle: 'text-[#20212B]',
+    headerSubtitle: 'text-[#737482]',
+    socialButtonsBlockButtonText: 'text-[#20212B]',
+    formFieldLabel: 'text-[#20212B]',
+    footerActionLink: 'text-[#5148B8]',
+    footerActionText: 'text-[#737482]',
+    dividerText: 'text-[#737482]',
+    identityPreviewEditButton: 'text-[#5148B8]',
+    formFieldSuccessText: 'text-[#2B8A67]',
+    alertText: 'text-[#C44B55]',
+    logoBox: 'rounded-xl',
+    logoImage: 'rounded-xl',
+    socialButtonsBlockButton: 'border-[#E5E3DE] bg-[#F8F7F3]',
+    formButtonPrimary: 'bg-[#5148B8] hover:bg-[#433A9F]',
+    formFieldInput: 'border-[#E5E3DE] bg-[#F8F7F3] text-[#20212B]',
+    footerAction: 'bg-transparent',
+    dividerLine: 'bg-[#E5E3DE]',
+    alert: 'border-[#F5D5D5] bg-[#FFF4F4]',
+    otpCodeFieldInput: 'border-[#E5E3DE] bg-[#F8F7F3]',
+    formFieldRow: 'text-[#20212B]',
+    main: 'bg-transparent',
+  },
+};
+
+function DashboardApp() {
+  const { user } = useUser();
+  const { signOut } = useClerk();
+  const parentName = user?.firstName || 'Sanjay';
   const [view, setView] = useState<View>('home');
   const [selectedChild, setSelectedChild] = useState<ChildId>('aarav');
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
@@ -85,8 +148,44 @@ function App() {
   const [calendarMode, setCalendarMode] = useState('Month');
   const [calendarChild, setCalendarChild] = useState<'all' | ChildId>('all');
   const [groupSelection, setGroupSelection] = useState<string[]>(['Class 6A Parents', 'Greenwood Sports']);
+  const [calendarEvents, setCalendarEvents] = useState<EventItem[]>(events);
+  const [calendarSyncing, setCalendarSyncing] = useState(false);
 
   const activeChild = children.find((child) => child.id === selectedChild) ?? children[0];
+  useEffect(() => {
+    void fetch('/api/me', { credentials: 'include' });
+    void syncCalendar();
+  }, []);
+
+  const syncCalendar = async () => {
+    setCalendarSyncing(true);
+    try {
+      const response = await fetch('/api/calendar/events', { credentials: 'include' });
+      if (!response.ok) throw new Error('Calendar sync failed');
+      const payload = (await response.json()) as { items?: Array<{ id: string; summary?: string; htmlLink?: string; start?: { date?: string; dateTime?: string } }> };
+      const liveEvents = (payload.items ?? []).map((event, index) => {
+        const rawStart = event.start?.dateTime ?? event.start?.date;
+        const date = rawStart ? new Date(rawStart) : new Date();
+        const isAllDay = Boolean(event.start?.date && !event.start?.dateTime);
+        return {
+          id: event.id || `google-${index}`,
+          title: event.summary || 'Untitled calendar event',
+          date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          time: isAllDay ? 'All day' : date.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }),
+          childId: selectedChild,
+          kind: 'Google Calendar',
+          source: 'Google Calendar',
+        } satisfies EventItem;
+      });
+      if (liveEvents.length > 0) setCalendarEvents(liveEvents);
+      setSources((current) => current.map((source) => source.id === 'calendar' ? { ...source, status: 'Connected', detail: `${liveEvents.length} events synced`, lastSync: 'Synced just now' } : source));
+      notify(liveEvents.length > 0 ? `${liveEvents.length} Google Calendar events synced` : 'Google Calendar is connected');
+    } catch {
+      notify('Calendar sync needs attention');
+    } finally {
+      setCalendarSyncing(false);
+    }
+  };
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 2800);
@@ -108,16 +207,16 @@ function App() {
   const content = useMemo(() => {
     if (view === 'home') return <HomeView tasks={tasks} activeChild={activeChild} onOpenScience={() => setModal('science')} onOpenTask={setDetailTask} onAddTask={addTask} onAsk={() => setModal('assistant')} onView={(next) => setView(next)} />;
     if (view === 'plan') return <PlanView tasks={tasks} selectedChild={selectedChild} tab={planTab} setTab={setPlanTab} filter={planFilter} setFilter={setPlanFilter} onComplete={completeTask} onOpenTask={setDetailTask} onAsk={() => setModal('assistant')} />;
-    if (view === 'calendar') return <CalendarView selectedChild={selectedChild} mode={calendarMode} setMode={setCalendarMode} child={calendarChild} setChild={setCalendarChild} onOpenEvent={setDetailEvent} />;
+    if (view === 'calendar') return <CalendarView selectedChild={selectedChild} eventsData={calendarEvents} mode={calendarMode} setMode={setCalendarMode} child={calendarChild} setChild={setCalendarChild} onOpenEvent={setDetailEvent} />;
     if (view === 'inbox') return <InboxView filter={inboxFilter} setFilter={setInboxFilter} onOpenScience={() => setModal('science')} onAddTask={addTask} />;
-    if (view === 'sources') return <SourcesView sources={sources} onSwitch={switchSource} onWhatsApp={() => setModal('whatsapp')} onNotify={notify} />;
-    if (view === 'profile') return <ProfileView child={activeChild} tasks={tasks} onSelect={setSelectedChild} onOpenTask={setDetailTask} onAdd={() => { setOnboardingStep(1); setModal('onboarding'); }} onNotify={notify} />;
+    if (view === 'sources') return <SourcesView sources={sources} onSwitch={switchSource} onSyncCalendar={syncCalendar} calendarSyncing={calendarSyncing} onWhatsApp={() => setModal('whatsapp')} onNotify={notify} />;
+    if (view === 'profile') return <ProfileView child={activeChild} tasks={tasks} eventsData={calendarEvents} onSelect={setSelectedChild} onOpenTask={setDetailTask} onAdd={() => { setOnboardingStep(1); setModal('onboarding'); }} onNotify={notify} />;
     return <SettingsView onNotify={notify} onOpenPrivacy={() => setModal('privacy')} onSources={() => setView('sources')} onOnboarding={() => { setOnboardingStep(0); setModal('onboarding'); }} />;
   }, [activeChild, calendarChild, calendarMode, inboxFilter, planFilter, planTab, selectedChild, sources, tasks, view]);
 
   return (
     <div className="sl-app">
-      <Sidebar view={view} setView={setView} selectedChild={selectedChild} setSelectedChild={setSelectedChild} />
+      <Sidebar view={view} setView={setView} selectedChild={selectedChild} setSelectedChild={setSelectedChild} parentName={parentName} onSignOut={() => void signOut({ redirectUrl: basePath || '/' })} />
       <div className="sl-main">
         <header className="sl-mobile-top">
           <button className="sl-icon-button" data-testid="button-mobile-menu" onClick={() => notify('Use More to explore SchoolLife')}><Menu size={19} /></button>
@@ -141,7 +240,7 @@ function App() {
   );
 }
 
-function Sidebar({ view, setView, selectedChild, setSelectedChild }: { view: View; setView: (v: View) => void; selectedChild: ChildId; setSelectedChild: (v: ChildId) => void }) {
+function Sidebar({ view, setView, selectedChild, setSelectedChild, parentName, onSignOut }: { view: View; setView: (v: View) => void; selectedChild: ChildId; setSelectedChild: (v: ChildId) => void; parentName: string; onSignOut: () => void }) {
   return <aside className="sl-sidebar">
     <button className="sl-brand" data-testid="button-brand" onClick={() => setView('home')}><span className="sl-mark">S</span><span>SchoolLife</span></button>
     <div className="sl-side-label">Workspace</div>
@@ -149,7 +248,7 @@ function Sidebar({ view, setView, selectedChild, setSelectedChild }: { view: Vie
     <div className="sl-side-label sl-side-label-child">Your family</div>
     <button className={`sl-child-link ${selectedChild === 'aarav' && view === 'profile' ? 'active' : ''}`} data-testid="button-child-aarav" onClick={() => { setSelectedChild('aarav'); setView('profile'); }}><span className="sl-avatar avatar-indigo">AK</span><span><strong>Aarav</strong><small>Grade 6 · Class 6A</small></span></button>
     <button className={`sl-child-link ${selectedChild === 'emma' && view === 'profile' ? 'active' : ''}`} data-testid="button-child-emma" onClick={() => { setSelectedChild('emma'); setView('profile'); }}><span className="sl-avatar avatar-peach">EK</span><span><strong>Emma</strong><small>Grade 3 · Class 3B</small></span></button>
-    <div className="sl-sidebar-bottom"><button className={`sl-side-link ${view === 'sources' ? 'active' : ''}`} data-testid="button-nav-sources" onClick={() => setView('sources')}><Zap size={18} /> Sources</button><button className={`sl-side-link ${view === 'settings' ? 'active' : ''}`} data-testid="button-nav-settings" onClick={() => setView('settings')}><SettingsIcon size={18} /> Settings</button><div className="sl-user"><span className="sl-avatar avatar-sanjay">SK</span><span><strong>Sanjay Kundu</strong><small>Parent account</small></span><ChevronDown size={15} /></div></div>
+    <div className="sl-sidebar-bottom"><button className={`sl-side-link ${view === 'sources' ? 'active' : ''}`} data-testid="button-nav-sources" onClick={() => setView('sources')}><Zap size={18} /> Sources</button><button className={`sl-side-link ${view === 'settings' ? 'active' : ''}`} data-testid="button-nav-settings" onClick={() => setView('settings')}><SettingsIcon size={18} /> Settings</button><button className="sl-user" data-testid="button-sign-out" onClick={onSignOut}><span className="sl-avatar avatar-sanjay">{parentName.slice(0, 2).toUpperCase()}</span><span><strong>{parentName}</strong><small>Sign out</small></span><ChevronDown size={15} /></button></div>
   </aside>;
 }
 
@@ -192,8 +291,8 @@ function TaskRow({ task, onComplete, onOpen }: { task: Task; onComplete: (id: st
   return <div className={`sl-task-row ${task.status === 'completed' ? 'is-complete' : ''}`} data-testid={`card-task-${task.id}`}><button className="sl-task-check" data-testid={`button-complete-${task.id}`} onClick={() => onComplete(task.id)}>{task.status === 'completed' ? <Check size={14} /> : <Circle size={19} />}</button><button className="sl-task-main" data-testid={`button-open-task-${task.id}`} onClick={onOpen}><span className={`sl-priority-pill ${task.priority}`}>{task.priority}</span><strong>{task.title}</strong><div className="sl-task-meta"><span>{task.childId === 'aarav' ? 'Aarav' : 'Emma'}</span><span>{task.dueDate} {task.dueTime && `· ${task.dueTime}`}</span><span>{task.source}</span></div></button><button className="sl-row-chevron" data-testid={`button-task-details-${task.id}`} onClick={onOpen}><ChevronRight size={17} /></button></div>;
 }
 
-function CalendarView({ selectedChild, mode, setMode, child, setChild, onOpenEvent }: { selectedChild: ChildId; mode: string; setMode: (v: string) => void; child: 'all' | ChildId; setChild: (v: 'all' | ChildId) => void; onOpenEvent: (event: EventItem) => void }) {
-  const visibleEvents = events.filter((event) => child === 'all' || event.childId === child);
+function CalendarView({ selectedChild, eventsData, mode, setMode, child, setChild, onOpenEvent }: { selectedChild: ChildId; eventsData: EventItem[]; mode: string; setMode: (v: string) => void; child: 'all' | ChildId; setChild: (v: 'all' | ChildId) => void; onOpenEvent: (event: EventItem) => void }) {
+  const visibleEvents = eventsData.filter((event) => child === 'all' || event.childId === child);
   const days = Array.from({ length: 30 }, (_, i) => i + 1);
   return <div><PageHeader eyebrow="School rhythm" title="Calendar" description="One view for every date your family needs to remember." action={<div className="sl-view-toggle">{['Month', 'Week', 'Agenda'].map((item) => <button key={item} className={mode === item ? 'active' : ''} data-testid={`button-calendar-${item.toLowerCase()}`} onClick={() => setMode(item)}>{item}</button>)}</div>} /><div className="sl-calendar-toolbar"><div className="sl-month-switch"><button data-testid="button-calendar-prev" onClick={() => {}}><ChevronLeft size={17} /></button><strong>September 2026</strong><button data-testid="button-calendar-next" onClick={() => {}}><ChevronRight size={17} /></button></div><div className="sl-child-toggle">{[['all', 'All children'], ['aarav', 'Aarav'], ['emma', 'Emma']].map(([id, label]) => <button key={id} className={child === id ? 'active' : ''} data-testid={`button-calendar-child-${id}`} onClick={() => setChild(id as 'all' | ChildId)}>{label}</button>)}</div></div>{mode === 'Agenda' ? <div className="sl-agenda">{visibleEvents.map((event) => <EventRow event={event} key={event.id} onOpen={onOpenEvent} />)}</div> : mode === 'Week' ? <div className="sl-week-calendar">{visibleEvents.slice(0, 5).map((event) => <EventRow event={event} key={event.id} onOpen={onOpenEvent} />)}</div> : <div className="sl-calendar-grid"><div className="sl-weekdays">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <span key={day}>{day}</span>)}</div><div className="sl-days">{days.map((day) => { const dayEvents = visibleEvents.filter((event) => Number(event.date.split(' ')[1]) === day); return <div className={`sl-day ${day === 8 ? 'today' : ''}`} key={day}><span>{day}</span>{dayEvents.map((event) => <button key={event.id} className={`sl-calendar-event ${event.kind === 'Deadline' ? 'urgent' : ''}`} data-testid={`button-calendar-event-${event.id}`} onClick={() => onOpenEvent(event)}>{event.title}</button>)}</div>; })}</div></div>}<div className="sl-calendar-legend"><span><i className="legend-dot purple"></i> Aarav</span><span><i className="legend-dot peach"></i> Emma</span><span><i className="legend-dot amber"></i> Important</span></div></div>;
 }
@@ -212,13 +311,13 @@ function MessageCard({ message, onOpen, onAdd }: { message: Message; onOpen: () 
   return <article className="sl-message-card" data-testid={`card-message-${message.id}`}><div className="sl-message-top"><span className={`sl-source-icon ${message.sender.includes('WhatsApp') || message.sender.includes('Parents') ? 'whatsapp' : message.sender.includes('Teacher') ? 'teacher' : 'school'}`}>{message.sender.includes('Parents') ? <MessageCircle size={15} /> : message.sender.includes('Teacher') ? <GraduationCap size={15} /> : <Mail size={15} />}</span><div><strong>{message.sender}</strong><small>Today · 09:18 AM</small></div>{message.needsAction && <span className="sl-action-badge">Needs action</span>}<button className="sl-more" data-testid={`button-message-more-${message.id}`} onClick={() => {}}><MoreHorizontal size={17} /></button></div><p className="sl-snippet">“{message.snippet}”</p><div className="sl-ai-summary"><span><Sparkles size={14} /> SchoolLife understood</span><strong>{message.summary}</strong><small><Tag size={13} /> {message.detected}</small></div><div className="sl-message-actions"><button className="sl-text-button" data-testid={`button-view-message-${message.id}`} onClick={onOpen}>View original <ChevronRight size={14} /></button>{message.needsAction && <button className="sl-secondary-button compact" data-testid={`button-add-message-${message.id}`} onClick={onAdd}><Plus size={14} /> Add to plan</button>}</div></article>;
 }
 
-function SourcesView({ sources, onSwitch, onWhatsApp, onNotify }: { sources: Source[]; onSwitch: (id: string) => void; onWhatsApp: () => void; onNotify: (msg: string) => void }) {
-  return <div><PageHeader eyebrow="Your connections" title="Sources" description="SchoolLife brings everything together without taking control away." action={<button className="sl-primary-button" data-testid="button-sync-all" onClick={() => onNotify('All sources synced just now')}><RefreshCw size={15} /> Sync all</button>} /><div className="sl-trust-banner"><span className="sl-trust-icon"><ShieldCheck size={19} /></span><div><strong>You control what SchoolLife can access.</strong><p>Change permissions or disconnect a source any time. We only process what you choose to share.</p></div><button data-testid="button-source-permissions" onClick={() => onNotify('Permissions are up to date')}>Manage permissions</button></div><div className="sl-source-list">{sources.map((source) => <div className="sl-source-row" key={source.id} data-testid={`row-source-${source.id}`}><span className={`sl-source-logo source-${source.id}`}>{source.id === 'email' ? <Mail size={19} /> : source.id === 'whatsapp' ? <MessageCircle size={19} /> : source.id === 'apps' ? <Zap size={19} /> : source.id === 'calendar' ? <CalendarDays size={19} /> : <FileText size={19} />}</span><div className="sl-source-info"><strong>{source.name}</strong><span>{source.detail}</span><small>{source.lastSync}</small></div><span className={`sl-connected ${source.status === 'Connected' ? 'yes' : ''}`}><span></span>{source.status}</span>{source.id === 'whatsapp' && source.status === 'Connected' ? <button className="sl-secondary-button compact" data-testid="button-manage-whatsapp" onClick={onWhatsApp}>Manage</button> : <button className="sl-secondary-button compact" data-testid={`button-source-${source.status === 'Connected' ? 'disconnect' : 'connect'}-${source.id}`} onClick={() => onSwitch(source.id)}>{source.status === 'Connected' ? 'Disconnect' : 'Connect'}</button>}{source.status === 'Connected' && source.id !== 'whatsapp' && <button className="sl-source-sync" data-testid={`button-sync-${source.id}`} onClick={() => onNotify(`${source.name} synced just now`)}><RefreshCw size={15} /></button>}</div>)}</div><div className="sl-docs-note"><Paperclip size={16} /><span><strong>Documents</strong> can process school PDFs, timetables, and circulars. You’ll see a summary before anything is added to your plan.</span></div></div>;
+function SourcesView({ sources, onSwitch, onSyncCalendar, calendarSyncing, onWhatsApp, onNotify }: { sources: Source[]; onSwitch: (id: string) => void; onSyncCalendar: () => void; calendarSyncing: boolean; onWhatsApp: () => void; onNotify: (msg: string) => void }) {
+  return <div><PageHeader eyebrow="Your connections" title="Sources" description="SchoolLife brings everything together without taking control away." action={<button className="sl-primary-button" data-testid="button-sync-all" onClick={() => { onSyncCalendar(); onNotify('Syncing connected sources'); }}><RefreshCw size={15} /> Sync all</button>} /><div className="sl-trust-banner"><span className="sl-trust-icon"><ShieldCheck size={19} /></span><div><strong>You control what SchoolLife can access.</strong><p>Change permissions or disconnect a source any time. We only process what you choose to share.</p></div><button data-testid="button-source-permissions" onClick={() => onNotify('Permissions are up to date')}>Manage permissions</button></div><div className="sl-source-list">{sources.map((source) => <div className="sl-source-row" key={source.id} data-testid={`row-source-${source.id}`}><span className={`sl-source-logo source-${source.id}`}>{source.id === 'email' ? <Mail size={19} /> : source.id === 'whatsapp' ? <MessageCircle size={19} /> : source.id === 'apps' ? <Zap size={19} /> : source.id === 'calendar' ? <CalendarDays size={19} /> : <FileText size={19} />}</span><div className="sl-source-info"><strong>{source.name}</strong><span>{source.detail}</span><small>{source.lastSync}</small></div><span className={`sl-connected ${source.status === 'Connected' ? 'yes' : ''}`}><span></span>{source.status}</span>{source.id === 'whatsapp' && source.status === 'Connected' ? <button className="sl-secondary-button compact" data-testid="button-manage-whatsapp" onClick={onWhatsApp}>Manage</button> : <button className="sl-secondary-button compact" data-testid={`button-source-${source.status === 'Connected' ? 'disconnect' : 'connect'}-${source.id}`} onClick={() => source.id === 'calendar' && source.status !== 'Connected' ? onSyncCalendar() : onSwitch(source.id)}>{calendarSyncing && source.id === 'calendar' ? 'Syncing…' : source.status === 'Connected' ? 'Disconnect' : 'Connect'}</button>}{source.status === 'Connected' && source.id !== 'whatsapp' && <button className="sl-source-sync" data-testid={`button-sync-${source.id}`} onClick={() => source.id === 'calendar' ? onSyncCalendar() : onNotify(`${source.name} synced just now`)}><RefreshCw size={15} /></button>}</div>)}</div><div className="sl-docs-note"><Paperclip size={16} /><span><strong>Documents</strong> can process school PDFs, timetables, and circulars. You’ll see a summary before anything is added to your plan.</span></div></div>;
 }
 
-function ProfileView({ child, tasks, onSelect, onOpenTask, onAdd, onNotify }: { child: Child; tasks: Task[]; onSelect: (id: ChildId) => void; onOpenTask: (task: Task) => void; onAdd: () => void; onNotify: (message: string) => void }) {
+function ProfileView({ child, tasks, eventsData, onSelect, onOpenTask, onAdd, onNotify }: { child: Child; tasks: Task[]; eventsData: EventItem[]; onSelect: (id: ChildId) => void; onOpenTask: (task: Task) => void; onAdd: () => void; onNotify: (message: string) => void }) {
   const childTasks = tasks.filter((task) => task.childId === child.id && task.status === 'open');
-  return <div><PageHeader eyebrow="Family profile" title={child.name} description="A focused view of one child’s school rhythm." action={<button className="sl-secondary-button" data-testid="button-add-child" onClick={onAdd}><Plus size={15} /> Add another child</button>} /><div className="sl-profile-switch"><span>Viewing</span>{children.map((item) => <button key={item.id} className={item.id === child.id ? 'active' : ''} data-testid={`button-profile-switch-${item.id}`} onClick={() => onSelect(item.id)}><span className={`sl-avatar ${item.id === 'aarav' ? 'avatar-indigo' : 'avatar-peach'}`}>{item.name.slice(0, 2).toUpperCase()}</span>{item.name.split(' ')[0]}</button>)}</div><div className="sl-profile-grid"><section className="sl-profile-hero"><span className={`sl-avatar large ${child.id === 'aarav' ? 'avatar-indigo' : 'avatar-peach'}`}>{child.name.slice(0, 2).toUpperCase()}</span><div><h2>{child.name}</h2><p>{child.grade} <span>·</span> {child.className}</p><small>{child.school}</small></div><button className="sl-more" data-testid="button-profile-more" onClick={() => onNotify('Profile details are up to date')}><MoreHorizontal size={18} /></button></section><section className="sl-profile-card sl-card"><div className="sl-eyebrow">Upcoming</div><h2>School rhythm</h2>{events.filter((event) => event.childId === child.id).slice(0, 3).map((event) => <EventRow key={event.id} event={event} onOpen={() => onNotify(`${event.title} is ${event.date} at ${event.time}`)} />)}</section><section className="sl-profile-card sl-card"><div className="sl-eyebrow">Tasks</div><h2>{childTasks.length} open for {child.name.split(' ')[0]}</h2>{childTasks.slice(0, 4).map((task) => <button className="sl-profile-task" key={task.id} data-testid={`button-profile-task-${task.id}`} onClick={() => onOpenTask(task)}><span className={`sl-priority-dot ${task.priority}`}></span><span>{task.title}<small>{task.dueDate} · {task.kind}</small></span><ChevronRight size={15} /></button>)}</section><section className="sl-subjects-card sl-card"><div className="sl-eyebrow">Subjects</div><h2>What {child.name.split(' ')[0]} is learning</h2><div className="sl-subject-grid">{child.subjects.map((subject, index) => <span key={subject}><i className={`subject-icon subject-${index}`}><GraduationCap size={14} /></i>{subject}</span>)}</div></section></div></div>;
+  return <div><PageHeader eyebrow="Family profile" title={child.name} description="A focused view of one child’s school rhythm." action={<button className="sl-secondary-button" data-testid="button-add-child" onClick={onAdd}><Plus size={15} /> Add another child</button>} /><div className="sl-profile-switch"><span>Viewing</span>{children.map((item) => <button key={item.id} className={item.id === child.id ? 'active' : ''} data-testid={`button-profile-switch-${item.id}`} onClick={() => onSelect(item.id)}><span className={`sl-avatar ${item.id === 'aarav' ? 'avatar-indigo' : 'avatar-peach'}`}>{item.name.slice(0, 2).toUpperCase()}</span>{item.name.split(' ')[0]}</button>)}</div><div className="sl-profile-grid"><section className="sl-profile-hero"><span className={`sl-avatar large ${child.id === 'aarav' ? 'avatar-indigo' : 'avatar-peach'}`}>{child.name.slice(0, 2).toUpperCase()}</span><div><h2>{child.name}</h2><p>{child.grade} <span>·</span> {child.className}</p><small>{child.school}</small></div><button className="sl-more" data-testid="button-profile-more" onClick={() => onNotify('Profile details are up to date')}><MoreHorizontal size={18} /></button></section><section className="sl-profile-card sl-card"><div className="sl-eyebrow">Upcoming</div><h2>School rhythm</h2>{eventsData.filter((event) => event.childId === child.id).slice(0, 3).map((event) => <EventRow key={event.id} event={event} onOpen={() => onNotify(`${event.title} is ${event.date} at ${event.time}`)} />)}</section><section className="sl-profile-card sl-card"><div className="sl-eyebrow">Tasks</div><h2>{childTasks.length} open for {child.name.split(' ')[0]}</h2>{childTasks.slice(0, 4).map((task) => <button className="sl-profile-task" key={task.id} data-testid={`button-profile-task-${task.id}`} onClick={() => onOpenTask(task)}><span className={`sl-priority-dot ${task.priority}`}></span><span>{task.title}<small>{task.dueDate} · {task.kind}</small></span><ChevronRight size={15} /></button>)}</section><section className="sl-subjects-card sl-card"><div className="sl-eyebrow">Subjects</div><h2>What {child.name.split(' ')[0]} is learning</h2><div className="sl-subject-grid">{child.subjects.map((subject, index) => <span key={subject}><i className={`subject-icon subject-${index}`}><GraduationCap size={14} /></i>{subject}</span>)}</div></section></div></div>;
 }
 
 function SettingsView({ onNotify, onOpenPrivacy, onSources, onOnboarding }: { onNotify: (msg: string) => void; onOpenPrivacy: () => void; onSources: () => void; onOnboarding: () => void }) {
@@ -266,6 +365,78 @@ function PrivacyModal({ onClose, onNotify }: { onClose: () => void; onNotify: (m
 function OnboardingModal({ step, setStep, onClose, onFinish }: { step: number; setStep: (step: number) => void; onClose: () => void; onFinish: () => void }) {
   const [addingAnother, setAddingAnother] = useState(false);
   return <Overlay onClose={onClose}><div className="sl-onboarding-modal">{step === 0 ? <><div className="sl-onboarding-mark"><Sparkles size={22} /></div><div className="sl-modal-eyebrow">A calmer school week</div><h2>School stuff, automatically organized.</h2><p>Connect the places school messages arrive, and SchoolLife will turn the noise into a clear family plan.</p><div className="sl-onboarding-lines"><span><Check size={14} /> One clear plan for every child</span><span><Check size={14} /> Helpful, not intrusive</span></div><button className="sl-primary-button full" data-testid="button-get-started" onClick={() => setStep(1)}>Get started <ChevronRight size={16} /></button></> : <><div className="sl-modal-eyebrow">Step 1 of 2 · Child setup</div><h2>Who are we organizing for?</h2><p>Add your child’s school details so every message lands in the right place.</p><div className="sl-setup-card"><span className="sl-avatar large avatar-indigo">AK</span><div><strong>Aarav Kundu</strong><span>Grade 6 · Class 6A</span><small>Greenwood International School</small></div><CheckCircle2 size={20} /></div>{addingAnother && <div className="sl-setup-card"><span className="sl-avatar large avatar-peach">EK</span><div><strong>Emma Kundu</strong><span>Grade 3 · Class 3B</span><small>Greenwood International School</small></div><CheckCircle2 size={20} /></div>}<button className="sl-add-child-row" data-testid="button-onboarding-add-child" onClick={() => setAddingAnother(true)}><Plus size={16} /> {addingAnother ? 'Another child added' : 'Add another child'}</button><button className="sl-primary-button full" data-testid="button-finish-setup" onClick={onFinish}>Continue to sources <ChevronRight size={16} /></button></>}</div></Overlay>;
+}
+
+function Landing() {
+  return <main className="sl-landing">
+    <div className="sl-landing-orb orb-one"></div>
+    <div className="sl-landing-orb orb-two"></div>
+    <div className="sl-landing-inner">
+      <div className="sl-landing-nav"><button className="sl-brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}><span className="sl-mark">S</span><span>SchoolLife</span></button><div className="sl-landing-actions"><a href="#how-it-works">How it works</a><a className="sl-secondary-button compact" href="/sign-in">Sign in</a><a className="sl-primary-button compact" href="/sign-up">Get started</a></div></div>
+      <section className="sl-landing-hero">
+        <div className="sl-landing-copy"><span className="sl-eyebrow">The calmer school week</span><h1>School stuff, <em>automatically organized.</em></h1><p>SchoolLife brings together school emails, messages and notices and turns them into one simple family plan.</p><div className="sl-landing-cta"><a className="sl-primary-button" href="/sign-up">Create your family plan <ChevronRight size={16} /></a><a className="sl-text-button" href="/sign-in">I already have an account <ChevronRight size={15} /></a></div><div className="sl-landing-trust"><span><ShieldCheck size={15} /> Your data stays in your control</span><span><Sparkles size={15} /> Built for busy families</span></div></div>
+        <div className="sl-landing-preview"><div className="sl-preview-top"><span className="sl-mark">S</span><strong>Good morning</strong><span className="sl-preview-avatar">SK</span></div><div className="sl-preview-greeting">Here’s what matters today.</div><div className="sl-preview-alert"><span className="sl-preview-dot"></span><div><small>NEEDS ATTENTION</small><strong>Science project due tomorrow</strong><span>Aarav · Class 6A · 8:00 PM</span></div><ChevronRight size={16} /></div><div className="sl-preview-columns"><div><small>TODAY</small><strong>Monday rhythm</strong><span>08:00&nbsp;&nbsp; School starts</span><span>10:30&nbsp;&nbsp; Math test</span><span>16:00&nbsp;&nbsp; Football practice</span></div><div><small>THIS WEEK</small><strong>Keep it moving</strong><span>English worksheet</span><span>Parent-teacher meeting</span><span>₹1,250 trip payment</span></div></div><div className="sl-preview-bottom"><Sparkles size={15} /><span>7 new school items, sorted</span><ChevronRight size={15} /></div></div>
+      </section>
+      <section className="sl-landing-proof" id="how-it-works"><div><span className="sl-eyebrow">From noise to next steps</span><h2>Stop searching through five places to find one deadline.</h2></div><div className="sl-proof-steps"><div><span>01</span><strong>Connect your sources</strong><p>Email, calendars, school apps, and the places messages arrive.</p></div><div><span>02</span><strong>SchoolLife understands</strong><p>Important dates, tasks, payments, and required items are pulled out.</p></div><div><span>03</span><strong>Your family stays ahead</strong><p>Everything lands in one clear plan, organized by child and urgency.</p></div></div></section>
+    </div>
+  </main>;
+}
+
+function LoadingScreen() {
+  return <div className="sl-auth-loading"><span className="sl-mark">S</span><strong>Preparing your family plan…</strong></div>;
+}
+
+function HomeRedirect() {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) return <LoadingScreen />;
+  return isSignedIn ? <Redirect to="/app" /> : <Landing />;
+}
+
+function ProtectedApp() {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) return <LoadingScreen />;
+  return isSignedIn ? <DashboardApp /> : <Redirect to="/" />;
+}
+
+function SignInPage() {
+  return <div className="sl-auth-page"><SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} /></div>;
+}
+
+function SignUpPage() {
+  return <div className="sl-auth-page"><SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} /></div>;
+}
+
+function ClerkProviderWithRoutes() {
+  const [, setLocation] = useLocation();
+
+  return <ClerkProvider
+    publishableKey={clerkPubKey}
+    proxyUrl={clerkProxyUrl}
+    appearance={clerkAppearance}
+    signInUrl={`${basePath}/sign-in`}
+    signUpUrl={`${basePath}/sign-up`}
+    routerPush={(to) => setLocation(to)}
+    routerReplace={(to) => setLocation(to, { replace: true })}
+    localization={{
+      signIn: { start: { title: 'Welcome back', subtitle: 'Sign in to access your family plan' } },
+      signUp: { start: { title: 'Create your family plan', subtitle: 'Start a calmer school week' } },
+    }}
+  >
+    <Switch>
+      <Route path="/" component={HomeRedirect} />
+      <Route path="/app" component={ProtectedApp} />
+      <Route path="/sign-in/*?" component={SignInPage} />
+      <Route path="/sign-up/*?" component={SignUpPage} />
+      <Route component={HomeRedirect} />
+    </Switch>
+  </ClerkProvider>;
+}
+
+function App() {
+  if (!clerkPubKey) {
+    return <LoadingScreen />;
+  }
+  return <WouterRouter base={basePath}><ClerkProviderWithRoutes /></WouterRouter>;
 }
 
 export default App;
