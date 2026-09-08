@@ -1,6 +1,9 @@
 import { Router, type IRouter } from "express";
 import { ReplitConnectors } from "@replit/connectors-sdk";
-import { requireAuth } from "../middlewares/requireAuth";
+import { db } from "@workspace/db";
+import { schoolChildren, schoolEvents, schoolSources } from "@workspace/db/schema";
+import { asc, eq } from "drizzle-orm";
+import { requireAuth, type AuthenticatedRequest } from "../middlewares/requireAuth";
 
 type CalendarEvent = {
   id: string;
@@ -62,6 +65,56 @@ router.get("/calendar/events", requireAuth, async (req, res) => {
     const items = (data.items ?? []).filter(
       (event) => event.status !== "cancelled",
     );
+    const clerkUserId = (req as AuthenticatedRequest).userId;
+    const [firstChild] = await db
+      .select({ slug: schoolChildren.slug })
+      .from(schoolChildren)
+      .where(eq(schoolChildren.clerkUserId, clerkUserId))
+      .orderBy(asc(schoolChildren.id))
+      .limit(1);
+    const childId = firstChild?.slug ?? "unassigned";
+    await Promise.all(
+      items.map(async (event) => {
+        const rawStart = event.start?.dateTime ?? event.start?.date;
+        const start = rawStart ? new Date(rawStart) : new Date();
+        const isAllDay = Boolean(event.start?.date && !event.start?.dateTime);
+        await db
+          .insert(schoolEvents)
+          .values({
+            clerkUserId,
+            externalId: `google:${event.id}`,
+            title: event.summary || "Untitled calendar event",
+            date: start.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+            time: isAllDay
+              ? "All day"
+              : start.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" }),
+            childId,
+            kind: "Google Calendar",
+            source: "Google Calendar",
+          })
+          .onConflictDoUpdate({
+            target: [schoolEvents.clerkUserId, schoolEvents.externalId],
+            set: {
+              title: event.summary || "Untitled calendar event",
+              updatedAt: new Date(),
+            },
+          });
+      }),
+    );
+    await db
+      .insert(schoolSources)
+      .values({
+        clerkUserId,
+        sourceKey: "calendar",
+        name: "Calendar",
+        status: "Connected",
+        detail: `${items.length} events synced`,
+        lastSync: "Synced just now",
+      })
+      .onConflictDoUpdate({
+        target: [schoolSources.clerkUserId, schoolSources.sourceKey],
+        set: { status: "Connected", detail: `${items.length} events synced`, lastSync: "Synced just now", updatedAt: new Date() },
+      });
     res.json({ items, syncedAt: new Date().toISOString() });
   } catch (error) {
     req.log.error({ err: error }, "Google Calendar sync failed");

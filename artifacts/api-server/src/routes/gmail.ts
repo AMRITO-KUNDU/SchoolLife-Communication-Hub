@@ -1,6 +1,9 @@
 import { Router, type IRouter } from "express";
 import { ReplitConnectors } from "@replit/connectors-sdk";
-import { requireAuth } from "../middlewares/requireAuth";
+import { db } from "@workspace/db";
+import { schoolChildren, schoolMessages, schoolSources } from "@workspace/db/schema";
+import { asc, eq } from "drizzle-orm";
+import { requireAuth, type AuthenticatedRequest } from "../middlewares/requireAuth";
 
 type GmailMessage = {
   id: string;
@@ -104,6 +107,62 @@ router.get("/gmail/messages", requireAuth, async (req, res) => {
         };
       })
       .filter((item): item is InboxItem => item !== null);
+    const clerkUserId = (req as AuthenticatedRequest).userId;
+    const [firstChild] = await db
+      .select({ slug: schoolChildren.slug })
+      .from(schoolChildren)
+      .where(eq(schoolChildren.clerkUserId, clerkUserId))
+      .orderBy(asc(schoolChildren.id))
+      .limit(1);
+    const childId = firstChild?.slug ?? "unassigned";
+    await Promise.all(
+      items.map((item) =>
+        db
+          .insert(schoolMessages)
+          .values({
+            clerkUserId,
+            externalId: `gmail:${item.id}`,
+            threadId: item.threadId,
+            sender: item.sender,
+            subject: item.subject,
+            snippet: item.snippet,
+            summary: item.subject,
+            detected: `${item.category} · ${new Date(item.date).toLocaleDateString("en-IN", { month: "short", day: "numeric" })}`,
+            category: item.category,
+            needsAction: item.needsAction,
+            childId,
+            source: "email",
+            receivedAt: new Date(item.date),
+          })
+          .onConflictDoUpdate({
+            target: [schoolMessages.clerkUserId, schoolMessages.externalId],
+            set: {
+              sender: item.sender,
+              subject: item.subject,
+              snippet: item.snippet,
+              summary: item.subject,
+              detected: `${item.category} · ${new Date(item.date).toLocaleDateString("en-IN", { month: "short", day: "numeric" })}`,
+              category: item.category,
+              needsAction: item.needsAction,
+              updatedAt: new Date(),
+            },
+          }),
+      ),
+    );
+    await db
+      .insert(schoolSources)
+      .values({
+        clerkUserId,
+        sourceKey: "email",
+        name: "Email",
+        status: "Connected",
+        detail: `${items.length} recent emails`,
+        lastSync: "Synced just now",
+      })
+      .onConflictDoUpdate({
+        target: [schoolSources.clerkUserId, schoolSources.sourceKey],
+        set: { status: "Connected", detail: `${items.length} recent emails`, lastSync: "Synced just now", updatedAt: new Date() },
+      });
 
     res.json({
       items,
