@@ -8,7 +8,7 @@ import {
   schoolTasks,
   userProfiles,
 } from "@workspace/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/requireAuth";
 
 const router: IRouter = Router();
@@ -29,40 +29,36 @@ async function ensureProfile(clerkUserId: string) {
   await db.insert(userProfiles).values({ clerkUserId });
 }
 
-router.post("/family/children", requireAuth, async (req, res) => {
+router.post("/family/context", requireAuth, async (req, res) => {
   const clerkUserId = (req as AuthenticatedRequest).userId;
-  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-  const grade = typeof req.body?.grade === "string" ? req.body.grade.trim() : "";
   const className = typeof req.body?.className === "string" ? req.body.className.trim() : "";
-  const school = typeof req.body?.school === "string" ? req.body.school.trim() : "";
-  const subjects = Array.isArray(req.body?.subjects)
-    ? req.body.subjects.filter((subject: unknown): subject is string => typeof subject === "string").map((subject: string) => subject.trim()).filter(Boolean)
-    : [];
-  if (!name || !grade || !className || !school) {
-    res.status(400).json({ error: "name, grade, className, and school are required" });
+  if (!className) {
+    res.status(400).json({ error: "className is required" });
     return;
   }
 
-  const baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "child";
   const existing = await db
-    .select({ slug: schoolChildren.slug })
+    .select({ id: schoolChildren.id, slug: schoolChildren.slug })
     .from(schoolChildren)
-    .where(eq(schoolChildren.clerkUserId, clerkUserId));
-  const usedSlugs = new Set(existing.map((child) => child.slug));
-  let slug = baseSlug;
-  let suffix = 2;
-  while (usedSlugs.has(slug)) slug = `${baseSlug}-${suffix++}`;
-
-  const [child] = await db.insert(schoolChildren).values({
-    clerkUserId,
-    slug,
-    name,
-    grade,
+    .where(eq(schoolChildren.clerkUserId, clerkUserId))
+    .orderBy(asc(schoolChildren.id))
+    .limit(1);
+  const context = {
+    name: "School",
+    grade: "School",
     className,
-    school,
-    subjects,
-  }).returning();
-  res.status(201).json({ ...child, id: String(child.id) });
+    school: "Connected school sources",
+    subjects: [] as string[],
+    updatedAt: new Date(),
+  };
+  const [child] = existing[0]
+    ? await db.update(schoolChildren).set(context).where(eq(schoolChildren.id, existing[0].id)).returning()
+    : await db.insert(schoolChildren).values({
+      clerkUserId,
+      slug: "school",
+      ...context,
+    }).returning();
+  res.status(201).json({ context: { ...child, id: String(child.id) } });
 });
 
 router.post("/family/tasks", requireAuth, async (req, res) => {
@@ -112,10 +108,14 @@ router.get("/family", requireAuth, async (req, res) => {
   ]);
 
   res.json({
-    children,
+    context: children[0] ? { ...children[0], id: String(children[0].id) } : null,
     tasks: tasks.map((task) => ({ ...task, id: String(task.id), items: task.items ?? [] })),
     events: events.map((event) => ({ ...event, id: String(event.id) })),
-    messages: messages.map((message) => ({ ...message, id: String(message.id) })),
+    messages: messages.map((message) => ({
+      ...message,
+      id: String(message.id),
+      source: message.source === "email" ? "Gmail" : message.source === "whatsapp" ? "WhatsApp" : message.source,
+    })),
     sources: sources.map((source) => ({ ...source, id: source.sourceKey, groups: source.groups ?? [] })),
   });
 });

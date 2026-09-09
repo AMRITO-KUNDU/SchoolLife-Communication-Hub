@@ -69,6 +69,14 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* Compact provider trail shown on every live record. */
+.sl-citation { display: inline-flex; align-items: center; gap: 4px; color: #77758f; font-size: 10px; }
+.sl-citation-note { display: block; color: #8b8d98; font-size: 10px; line-height: 1.45; margin-top: 8px; }
+.sl-muted-copy { color: #8b8d98; font-size: 12px; }
+.sl-message-card .sl-citation { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid #efedf4; }
+.sl-detail-section .sl-source-chip { margin-bottom: 2px; }
+.sl-child-toggle { display: none; }
+
 /* LIGHT MODE */
 :root {
   --button-outline: rgba(0, 0, 0, 0.1);
