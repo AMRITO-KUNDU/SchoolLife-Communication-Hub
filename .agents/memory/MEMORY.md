@@ -1,1 +1,0 @@
-- [SchoolLife data policy](schoollife-data-policy.md) — new accounts stay empty; only onboarding and approved live sources create family records.
