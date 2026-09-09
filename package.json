@@ -1,19 +1,21 @@
 {
-  "name": "workspace",
+  "name": "schoollife",
   "version": "0.0.0",
   "license": "MIT",
+  "private": true,
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "dev": "pnpm run --parallel /dev:api|dev:web/",
+    "dev:api": "pnpm --filter @workspace/api-server run dev",
+    "dev:web": "pnpm --filter @workspace/schoollife run dev",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
-  },
-  "private": true,
-  "dependencies": {
-    "@replit/connectors-sdk": "^0.4.1"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./apps/**\" --filter \"./scripts\" --if-present run typecheck",
+    "db:push": "pnpm --filter @workspace/db run push",
+    "db:push-force": "pnpm --filter @workspace/db run push-force"
   },
   "devDependencies": {
     "prettier": "^3.9.6",
-    "typescript": "~5.9.3"
+    "typescript": "\~5.9.3"
   }
 }
