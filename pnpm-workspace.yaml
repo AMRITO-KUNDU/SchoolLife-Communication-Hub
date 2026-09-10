@@ -1,13 +1,10 @@
-# Block brand-new npm publishes for 24h (supply-chain buffer).
-# Add a package under minimumReleaseAgeExclude only for urgent trusted fixes, then remove it.
 minimumReleaseAge: 1440
-
 minimumReleaseAgeExclude: []
 
 packages:
-  - artifacts/*
-  - lib/*
-  - lib/integrations/*
+  - apps/*
+  - packages/*
+  - packages/integrations/*
   - scripts
 
 catalog:
