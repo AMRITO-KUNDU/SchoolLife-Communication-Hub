@@ -34,7 +34,14 @@ app.use(
 );
 
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
-app.use(cors({ credentials: true, origin: true }));
+
+app.use(
+  cors({
+    credentials: true,
+    origin: process.env.APP_ORIGIN || true,
+  }),
+);
+
 app.use(
   clerkMiddleware((req) => ({
     publishableKey: publishableKeyFromHost(
@@ -43,6 +50,7 @@ app.use(
     ),
   })),
 );
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
