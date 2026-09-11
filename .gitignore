@@ -48,3 +48,8 @@ Thumbs.db
 .cache/
 .local/
 .data/whatsapp/
+
+.env
+.env.*
+!.env.example
+.data/
