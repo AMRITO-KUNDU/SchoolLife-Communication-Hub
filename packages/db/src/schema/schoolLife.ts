@@ -166,6 +166,24 @@ export const syncStates = pgTable(
   }),
 );
 
+export const googleTokens = pgTable(
+  "google_tokens",
+  {
+    id: serial("id").primaryKey(),
+    clerkUserId: text("clerk_user_id").notNull(),
+    accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token"),
+    expiryDate: timestamp("expiry_date", { withTimezone: true }),
+    scope: text("scope"),
+    ...timestamps,
+  },
+  (table) => ({
+    ownerUser: uniqueIndex("google_tokens_owner_user_idx").on(
+      table.clerkUserId,
+    ),
+  }),
+);
+
 export type SchoolChild = typeof schoolChildren.$inferSelect;
 export type SchoolTask = typeof schoolTasks.$inferSelect;
 export type SchoolEvent = typeof schoolEvents.$inferSelect;
@@ -173,3 +191,4 @@ export type SchoolMessage = typeof schoolMessages.$inferSelect;
 export type SchoolSource = typeof schoolSources.$inferSelect;
 export type WhatsappGroup = typeof whatsappGroups.$inferSelect;
 export type SyncState = typeof syncStates.$inferSelect;
+export type GoogleToken = typeof googleTokens.$inferSelect;
