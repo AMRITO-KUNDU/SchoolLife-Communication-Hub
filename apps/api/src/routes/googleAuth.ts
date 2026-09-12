@@ -21,13 +21,16 @@ router.get("/google/connect", async (req, res) => {
     auth?.userId ??
     (typeof auth?.sessionClaims?.userId === "string"
       ? auth.sessionClaims.userId
-      : undefined) ??
-    (typeof req.query.userId === "string" ? req.query.userId : undefined);
+      : undefined);
+
+  const frontendUrl = (
+    process.env.FRONTEND_URL || "https://school-life-communication-hub.vercel.app"
+  ).replace(/\/$/, "");
 
   if (!userId) {
-    res.status(401).json({
-      error: "Authentication required to connect Google account.",
-    });
+    res.redirect(
+      `${frontendUrl}/sign-in?redirect_url=${encodeURIComponent("/api/google/connect")}`,
+    );
     return;
   }
 
@@ -55,12 +58,13 @@ router.get("/google/connect", async (req, res) => {
 
 router.get("/google/callback", async (req, res) => {
   const { code, state, error: googleError } = req.query;
-  const frontendUrl =
-    process.env.FRONTEND_URL || "https://school-life-communication-hub.vercel.app";
+  const frontendUrl = (
+    process.env.FRONTEND_URL || "https://school-life-communication-hub.vercel.app"
+  ).replace(/\/$/, "");
 
   if (googleError || !code || typeof code !== "string") {
     req.log?.error({ err: googleError }, "Google OAuth callback error");
-    res.redirect(`${frontendUrl}?error=google_auth_failed`);
+    res.redirect(`${frontendUrl}/app?error=google_auth_failed`);
     return;
   }
 
@@ -89,7 +93,7 @@ router.get("/google/callback", async (req, res) => {
     const { tokens } = await oauth2Client.getToken(code);
 
     if (!tokens.access_token) {
-      res.redirect(`${frontendUrl}?error=google_no_access_token`);
+      res.redirect(`${frontendUrl}/app?error=google_no_access_token`);
       return;
     }
 
@@ -156,10 +160,10 @@ router.get("/google/callback", async (req, res) => {
         },
       });
 
-    res.redirect(`${frontendUrl}?connected=google`);
+    res.redirect(`${frontendUrl}/app?connected=google`);
   } catch (error) {
     req.log?.error({ err: error }, "Failed to exchange Google OAuth code");
-    res.redirect(`${frontendUrl}?error=token_exchange_failed`);
+    res.redirect(`${frontendUrl}/app?error=token_exchange_failed`);
   }
 });
 

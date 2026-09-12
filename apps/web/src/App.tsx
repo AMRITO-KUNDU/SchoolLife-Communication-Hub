@@ -121,6 +121,14 @@ function DashboardApp() {
   const [whatsappLoading, setWhatsappLoading] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') === 'google') {
+      notify('Google connected');
+      params.delete('connected');
+      const newQuery = params.toString();
+      const newUrl = window.location.pathname + (newQuery ? `?${newQuery}` : '');
+      window.history.replaceState({}, '', newUrl);
+    }
     void (async () => {
       try {
         await loadFamily();
