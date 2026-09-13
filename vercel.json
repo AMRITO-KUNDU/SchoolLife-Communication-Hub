@@ -1,4 +1,6 @@
 {
+  "framework": "vite",
+  "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter @workspace/schoollife run build",
   "outputDirectory": "apps/web/dist/public",
   "headers": [
