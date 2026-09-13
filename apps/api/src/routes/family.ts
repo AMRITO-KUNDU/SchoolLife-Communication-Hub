@@ -9,7 +9,9 @@ import {
   userProfiles,
 } from "@workspace/db/schema";
 import { and, asc, eq } from "drizzle-orm";
+import { google } from "googleapis";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/requireAuth";
+import { getAuthenticatedClient } from "../lib/googleOAuth";
 
 const router: IRouter = Router();
 
@@ -28,6 +30,43 @@ async function ensureProfile(clerkUserId: string) {
     .limit(1);
   if (existing[0]) return;
   await db.insert(userProfiles).values({ clerkUserId });
+}
+
+async function inferSchoolContext(clerkUserId: string) {
+  const authClient = await getAuthenticatedClient(clerkUserId);
+  if (!authClient) return null;
+
+  const classroom = google.classroom({ version: "v1", auth: authClient });
+  const gmail = google.gmail({ version: "v1", auth: authClient });
+  const [coursesResponse, messagesResponse] = await Promise.all([
+    classroom.courses.list({ courseStates: ["ACTIVE"], pageSize: 20 }),
+    gmail.users.messages.list({ userId: "me", maxResults: 10, q: "category:primary" }),
+  ]);
+  const course = coursesResponse.data.courses?.[0];
+  const className = [course?.name, course?.section].filter(Boolean).join(" · ") || "Connected school sources";
+  const schoolSender = messagesResponse.data.messages?.[0]?.id;
+  return {
+    name: course?.name || "School",
+    grade: course?.section || "School",
+    className,
+    school: schoolSender ? "School identified from Gmail and Google Classroom" : "Connected school sources",
+    subjects: coursesResponse.data.courses?.map((item) => item.name || "").filter(Boolean) ?? [],
+    updatedAt: new Date(),
+  };
+}
+
+async function ensureAutoContext(clerkUserId: string) {
+  const existing = await db.select().from(schoolChildren).where(eq(schoolChildren.clerkUserId, clerkUserId)).limit(1);
+  if (existing[0]) return existing[0];
+  try {
+    const context = await inferSchoolContext(clerkUserId);
+    if (!context) return null;
+    const [child] = await db.insert(schoolChildren).values({ clerkUserId, slug: "school", ...context }).returning();
+    return child;
+  } catch {
+    // A missing/partially granted Google connection should not block the app.
+    return null;
+  }
 }
 
 router.post("/family/context", requireAuth, async (req, res) => {
@@ -87,6 +126,7 @@ router.post("/family/tasks", requireAuth, async (req, res) => {
 router.get("/family", requireAuth, async (req, res) => {
   const clerkUserId = (req as AuthenticatedRequest).userId;
   await ensureProfile(clerkUserId);
+  await ensureAutoContext(clerkUserId);
   await Promise.all(sourceDefaults.map(([sourceKey, name, status, detail, lastSync]) =>
     db.insert(schoolSources).values({
       clerkUserId,

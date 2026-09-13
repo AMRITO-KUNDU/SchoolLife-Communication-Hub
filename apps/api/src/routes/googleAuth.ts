@@ -163,6 +163,26 @@ router.get("/google/callback", async (req, res) => {
         },
       });
 
+    await db
+      .insert(schoolSources)
+      .values({
+        clerkUserId: userId,
+        sourceKey: "calendar",
+        name: "Calendar",
+        status: "Connected",
+        detail: "Connected Google Calendar",
+        lastSync: "Connected just now",
+      })
+      .onConflictDoUpdate({
+        target: [schoolSources.clerkUserId, schoolSources.sourceKey],
+        set: {
+          status: "Connected",
+          detail: "Connected Google Calendar",
+          lastSync: "Connected just now",
+          updatedAt: new Date(),
+        },
+      });
+
     res.redirect(`${frontendUrl}/app?connected=google`);
   } catch (error) {
     req.log?.error({ err: error }, "Failed to exchange Google OAuth code");
