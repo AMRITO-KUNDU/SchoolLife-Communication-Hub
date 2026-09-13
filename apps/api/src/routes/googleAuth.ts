@@ -10,6 +10,9 @@ const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/classroom.courses.readonly",
+  "https://www.googleapis.com/auth/classroom.announcements.readonly",
+  "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
 ];
 
 router.get("/google/connect", async (req, res) => {
@@ -144,17 +147,17 @@ router.get("/google/callback", async (req, res) => {
       .insert(schoolSources)
       .values({
         clerkUserId: userId,
-        sourceKey: "calendar",
-        name: "Calendar",
+        sourceKey: "classroom",
+        name: "Classroom",
         status: "Connected",
-        detail: "Connected Google Calendar",
+        detail: "Connected Google Classroom",
         lastSync: "Connected just now",
       })
       .onConflictDoUpdate({
         target: [schoolSources.clerkUserId, schoolSources.sourceKey],
         set: {
           status: "Connected",
-          detail: "Connected Google Calendar",
+          detail: "Connected Google Classroom",
           lastSync: "Connected just now",
           updatedAt: new Date(),
         },

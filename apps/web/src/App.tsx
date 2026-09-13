@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { apiUrl } from '@/lib/api';
 import { ClerkProvider, SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
@@ -148,7 +149,7 @@ function DashboardApp() {
   }, [modal]);
 
   const loadFamily = async () => {
-    const response = await fetch('/api/family', { credentials: 'include' });
+    const response = await fetch(apiUrl('/api/family'), { credentials: 'include' });
     if (!response.ok) throw new Error('Family data could not be loaded');
     const payload = await response.json() as {
       context?: { id: string; slug: string; name: string; grade: string; className: string; school: string } | null;
@@ -167,7 +168,7 @@ function DashboardApp() {
   const syncCalendar = async () => {
     setCalendarSyncing(true);
     try {
-      const response = await fetch('/api/calendar/events', { credentials: 'include' });
+      const response = await fetch(apiUrl('/api/calendar/events'), { credentials: 'include' });
       if (!response.ok) throw new Error('Calendar sync failed');
       const payload = (await response.json()) as { items?: Array<{ id: string; summary?: string; htmlLink?: string; start?: { date?: string; dateTime?: string } }> };
       const liveEvents = (payload.items ?? []).map((event, index) => {
@@ -196,7 +197,7 @@ function DashboardApp() {
   const syncGmail = async () => {
     setGmailSyncing(true);
     try {
-      const response = await fetch('/api/gmail/messages?pageSize=30', { credentials: 'include' });
+      const response = await fetch(apiUrl('/api/gmail/messages?pageSize=30'), { credentials: 'include' });
       if (!response.ok) throw new Error('Gmail sync failed');
       const payload = (await response.json()) as { items?: Array<{ id: string; sender: string; subject: string; snippet: string; date: string; category: string; needsAction: boolean }> };
       const liveMessages = (payload.items ?? []).map((message, index) => ({
@@ -228,7 +229,7 @@ function DashboardApp() {
     if (!currentTask) return;
     const nextStatus = currentTask.status === 'completed' ? 'open' : 'completed';
     setTasks((current) => current.map((task) => task.id === id ? { ...task, status: nextStatus } : task));
-    void fetch(`/api/family/tasks/${encodeURIComponent(id)}`, {
+    void fetch(apiUrl(`/api/family/tasks/${encodeURIComponent(id)}`), {
       method: 'PATCH',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -246,8 +247,8 @@ function DashboardApp() {
   const refreshWhatsapp = async () => {
     try {
       const [statusResponse, groupsResponse] = await Promise.all([
-        fetch('/api/whatsapp/status', { credentials: 'include' }),
-        fetch('/api/whatsapp/groups', { credentials: 'include' }),
+        fetch(apiUrl('/api/whatsapp/status'), { credentials: 'include' }),
+        fetch(apiUrl('/api/whatsapp/groups'), { credentials: 'include' }),
       ]);
       if (statusResponse.ok) {
         const status = await statusResponse.json() as { status: typeof whatsappStatus; qrDataUrl?: string; pairingCode?: string; lastError?: string };
@@ -273,7 +274,7 @@ function DashboardApp() {
   const connectWhatsapp = async (mode: 'qr' | 'code' = 'qr', phoneNumber?: string) => {
     setWhatsappLoading(true);
     try {
-      const response = await fetch('/api/whatsapp/connect', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode, phoneNumber }) });
+      const response = await fetch(apiUrl('/api/whatsapp/connect'), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode, phoneNumber }) });
       if (!response.ok) throw new Error('WhatsApp connection failed');
       const status = await response.json() as { status: typeof whatsappStatus; qrDataUrl?: string; pairingCode?: string };
       setWhatsappStatus(status.status);
@@ -289,7 +290,7 @@ function DashboardApp() {
   };
 
   const toggleWhatsappGroup = async (group: WhatsappGroup) => {
-    const response = await fetch(`/api/whatsapp/groups/${encodeURIComponent(group.jid)}`, {
+    const response = await fetch(apiUrl(`/api/whatsapp/groups/${encodeURIComponent(group.jid)}`), {
       method: 'PATCH',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -304,7 +305,7 @@ function DashboardApp() {
   };
 
   const saveSchoolContext = async (context: { className: string }) => {
-    const response = await fetch('/api/family/context', {
+    const response = await fetch(apiUrl('/api/family/context'), {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -317,7 +318,7 @@ function DashboardApp() {
 
   const addExtractedTasks = async (extraction: ExtractionResult, message: Message | null) => {
     const childId = message?.childId || schoolContext?.id || 'unassigned';
-    const responses = await Promise.all(extraction.tasks.map((task) => fetch('/api/family/tasks', {
+    const responses = await Promise.all(extraction.tasks.map((task) => fetch(apiUrl('/api/family/tasks'), {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -334,7 +335,7 @@ function DashboardApp() {
     if (view === 'plan') return <PlanView tasks={tasks} contextId={schoolContext?.id || 'unassigned'} tab={planTab} setTab={setPlanTab} filter={planFilter} setFilter={setPlanFilter} onComplete={completeTask} onOpenTask={setDetailTask} />;
     if (view === 'calendar') return <CalendarView childrenData={schoolContext ? [schoolContext] : []} eventsData={calendarEvents} mode={calendarMode} setMode={setCalendarMode} child="all" setChild={() => {}} onOpenEvent={setDetailEvent} />;
     if (view === 'inbox') return <InboxView messagesData={inboxMessages} gmailSyncing={gmailSyncing} onSyncGmail={syncGmail} filter={inboxFilter} setFilter={setInboxFilter} onOpenScience={(message) => { setSelectedMessage(message); setModal('science'); }} onAddTask={addTask} />;
-    if (view === 'sources') return <SourcesView sources={sources} onSyncCalendar={syncCalendar} calendarSyncing={calendarSyncing} onSyncGmail={syncGmail} gmailSyncing={gmailSyncing} onNotify={notify} />;
+    if (view === 'sources') return <SourcesView sources={sources} setSources={setSources} onSyncCalendar={syncCalendar} calendarSyncing={calendarSyncing} onSyncGmail={syncGmail} gmailSyncing={gmailSyncing} onNotify={notify} refreshFamily={loadFamily} />;
     return <SettingsView user={user ?? null} onNotify={notify} onOpenPrivacy={() => setModal('privacy')} onSources={() => setView('sources')} onContextSetup={() => { setOnboardingStep(0); setModal('onboarding'); }} />;
   }, [calendarMode, gmailSyncing, inboxFilter, inboxMessages, planFilter, planTab, schoolContext, sources, tasks, user, view]);
 
@@ -433,15 +434,42 @@ function MessageCard({ message, onOpen, onAdd }: { message: Message; onOpen: () 
   return <article className="sl-message-card" data-testid={`card-message-${message.id}`}><div className="sl-message-top"><span className={`sl-source-icon ${message.source.toLowerCase().includes('whatsapp') ? 'whatsapp' : message.source.toLowerCase().includes('email') || message.source.toLowerCase().includes('gmail') ? 'school' : 'teacher'}`}>{message.source.toLowerCase().includes('whatsapp') ? <MessageCircle size={15} /> : message.source.toLowerCase().includes('email') || message.source.toLowerCase().includes('gmail') ? <Mail size={15} /> : <GraduationCap size={15} />}</span><div><strong>{message.sender}</strong><small>{message.source} · {message.detected}</small></div>{message.needsAction && <span className="sl-action-badge">Needs action</span>}<button className="sl-more" data-testid={`button-message-more-${message.id}`} onClick={() => {}} aria-label="Message actions"><MoreHorizontal size={17} /></button></div><p className="sl-snippet">“{message.snippet}”</p><div className="sl-ai-summary"><span><Sparkles size={14} /> AI summary</span><strong>{message.summary}</strong><small><Tag size={13} /> {message.category} · {message.source}</small></div><div className="sl-citation"><ShieldCheck size={12} /> Original source: {message.source}</div><div className="sl-message-actions"><button className="sl-text-button" data-testid={`button-view-message-${message.id}`} onClick={onOpen}>Review source & extraction <ChevronRight size={14} /></button>{message.needsAction && <button className="sl-secondary-button compact" data-testid={`button-add-message-${message.id}`} onClick={onAdd}><Plus size={14} /> Add to plan</button>}</div></article>;
 }
 
-function SourcesView({ sources, onSyncCalendar, calendarSyncing, onSyncGmail, gmailSyncing, onNotify }: { sources: Source[]; onSyncCalendar: () => void; calendarSyncing: boolean; onSyncGmail: () => void; gmailSyncing: boolean; onNotify: (msg: string) => void }) {
+function SourcesView({ sources, onSyncCalendar, calendarSyncing, onSyncGmail, gmailSyncing, onNotify, refreshFamily }: { sources: Source[]; onSyncCalendar: () => void; calendarSyncing: boolean; onSyncGmail: () => void; gmailSyncing: boolean; onNotify: (msg: string) => void; refreshFamily: () => void }) {
+  const notify = onNotify;
   const syncSource = (source: Source) => {
-    if (source.id === 'calendar' || source.id === 'email') {
+    if (source.id === 'calendar' || source.id === 'email' || source.id === 'classroom') {
       if (source.status !== 'Connected') {
-        window.location.href = '/api/google/connect';
+        window.location.href = apiUrl('/api/google/connect');
         return;
       }
       if (source.id === 'calendar') return onSyncCalendar();
       if (source.id === 'email') return onSyncGmail();
+      // Classroom sync – simple fetch and notify
+      void (async () => {
+        try {
+          const response = await fetch(apiUrl('/api/classroom/sync'), { credentials: 'include' });
+          if (!response.ok) throw new Error('Classroom sync failed');
+          const payload = await response.json() as { courses?: any[]; announcements?: any[]; coursework?: any[] };
+          const { courses = [], announcements = [], coursework = [] } = payload;
+          const totalUpdates = announcements.length + coursework.length;
+          setSources((current) =>
+            current.map((src) =>
+              src.id === 'classroom'
+                ? {
+                    ...src,
+                    status: 'Connected',
+                    detail: `${courses.length} courses • ${totalUpdates} updates`,
+                    lastSync: 'Synced just now',
+                  }
+                : src,
+            ),
+          );
+          notify(`${totalUpdates} Google Classroom updates synced`);
+        } catch {
+          notify('Google Classroom sync needs attention');
+        }
+      })();
+      return;
     }
     onNotify(`${source.name} does not have a sync action yet`);
   };
@@ -472,7 +500,7 @@ function ExtractionModal({ message, onClose, onAdd }: { message: Message | null;
   const text = message ? `${message.sender}\n${message.snippet}\n${message.summary}` : '';
   useEffect(() => {
     if (!text) return;
-    void fetch('/api/ai/extract', {
+    void fetch(apiUrl('/api/ai/extract'), {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

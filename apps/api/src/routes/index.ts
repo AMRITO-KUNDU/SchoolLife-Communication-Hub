@@ -6,6 +6,7 @@ import gmailRouter from "./gmail";
 import familyRouter from "./family";
 import whatsappRouter from "./whatsapp";
 import aiRouter from "./ai";
+import classroomRouter from "./classroom";
 import googleAuthRouter from "./googleAuth";
 
 const router: IRouter = Router();
@@ -16,7 +17,7 @@ router.use(calendarRouter);
 router.use(gmailRouter);
 router.use(familyRouter);
 router.use(whatsappRouter);
-router.use(aiRouter);
+router.use(classroomRouter);
 router.use(googleAuthRouter);
 
 export default router;

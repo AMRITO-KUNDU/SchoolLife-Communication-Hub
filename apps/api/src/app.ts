@@ -38,6 +38,9 @@ app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 app.use(
   cors({
     credentials: true,
+    // When APP_ORIGIN is set (production), restrict to that exact origin.
+    // Fall back to true (reflect request origin) for local dev / preview where
+    // no APP_ORIGIN is configured.
     origin: process.env.APP_ORIGIN || true,
   }),
 );

@@ -17,6 +17,7 @@ const sourceDefaults = [
   ["email", "Email", "Connect", "Connect Gmail to read school emails", "Not connected"],
   ["whatsapp", "WhatsApp", "Connect", "Connect a WhatsApp Web session to read selected school groups", "Not connected"],
   ["calendar", "Calendar", "Connect", "Connect Google Calendar to keep dates in one place", "Not connected"],
+  ["classroom", "Classroom", "Connect", "Connect Google Classroom to read school updates", "Not connected"],
 ] as const;
 
 async function ensureProfile(clerkUserId: string) {
