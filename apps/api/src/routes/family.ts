@@ -8,7 +8,7 @@ import {
   schoolTasks,
   userProfiles,
 } from "@workspace/db/schema";
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { google } from "googleapis";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/requireAuth";
 import { getAuthenticatedClient } from "../lib/googleOAuth";
@@ -35,71 +35,76 @@ async function ensureProfile(clerkUserId: string) {
 async function inferSchoolContext(clerkUserId: string) {
   const authClient = await getAuthenticatedClient(clerkUserId);
   if (!authClient) return null;
-
-  const classroom = google.classroom({ version: "v1", auth: authClient });
-  const gmail = google.gmail({ version: "v1", auth: authClient });
-  const [coursesResponse, messagesResponse] = await Promise.all([
-    classroom.courses.list({ courseStates: ["ACTIVE"], pageSize: 20 }),
-    gmail.users.messages.list({ userId: "me", maxResults: 10, q: "category:primary" }),
-  ]);
-  const course = coursesResponse.data.courses?.[0];
-  const className = [course?.name, course?.section].filter(Boolean).join(" · ") || "Connected school sources";
-  const schoolSender = messagesResponse.data.messages?.[0]?.id;
-  return {
-    name: course?.name || "School",
-    grade: course?.section || "School",
-    className,
-    school: schoolSender ? "School identified from Gmail and Google Classroom" : "Connected school sources",
-    subjects: coursesResponse.data.courses?.map((item) => item.name || "").filter(Boolean) ?? [],
-    updatedAt: new Date(),
-  };
-}
-
-async function ensureAutoContext(clerkUserId: string) {
-  const existing = await db.select().from(schoolChildren).where(eq(schoolChildren.clerkUserId, clerkUserId)).limit(1);
-  if (existing[0]) return existing[0];
   try {
-    const context = await inferSchoolContext(clerkUserId);
-    if (!context) return null;
-    const [child] = await db.insert(schoolChildren).values({ clerkUserId, slug: "school", ...context }).returning();
-    return child;
-  } catch {
-    // A missing/partially granted Google connection should not block the app.
+    const classroom = google.classroom({ version: "v1", auth: authClient });
+    const gmail = google.gmail({ version: "v1", auth: authClient });
+    const [coursesResponse, messagesResponse] = await Promise.all([
+      classroom.courses.list({ courseStates: ["ACTIVE"], pageSize: 20 }),
+      gmail.users.messages.list({
+        userId: "me",
+        maxResults: 50,
+        q: "from:school OR from:teacher OR from:principal OR from:admin OR subject:(school OR class OR homework OR assignment)",
+      }),
+    ]);
+    const courses = coursesResponse.data.courses || [];
+    const primaryCourse = courses[0];
+    const grade = primaryCourse?.section || courses.map((course) => course.section).find(Boolean) || "Connected school";
+    const className = [primaryCourse?.name, primaryCourse?.section].filter(Boolean).join(" · ") || "Connected school";
+    const subjects = Array.from(new Set(courses.map((course) => course.name || course.section).filter(Boolean))) as string[];
+    let schoolName = "Connected school";
+    for (const message of (messagesResponse.data.messages || []).slice(0, 5)) {
+      if (!message.id) continue;
+      try {
+        const detail = await gmail.users.messages.get({ userId: "me", id: message.id, format: "metadata" });
+        const headers = detail.data.payload?.headers || [];
+        const from = headers.find((header) => header.name?.toLowerCase() === "from")?.value || "";
+        const subject = headers.find((header) => header.name?.toLowerCase() === "subject")?.value || "";
+        const domain = from.match(/@([^>\s]+)/)?.[1]?.split(".")[0];
+        if (domain && !["gmail", "yahoo", "outlook", "hotmail"].includes(domain.toLowerCase())) {
+          schoolName = domain.replace(/[-_]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+          break;
+        }
+        const schoolMatch = subject.match(/(?:from|at|for)\s+([A-Z][a-zA-Z\s]+(?:School|Academy|College|Institute))/i);
+        if (schoolMatch?.[1]) {
+          schoolName = schoolMatch[1].trim();
+          break;
+        }
+      } catch {
+        // One malformed message should not prevent context detection from the others.
+      }
+    }
+    return { name: schoolName, grade, className, school: schoolName, subjects, updatedAt: new Date() };
+  } catch (error) {
+    console.error("Failed to infer school context:", error);
     return null;
   }
 }
 
-router.post("/family/context", requireAuth, async (req, res) => {
-  const clerkUserId = (req as AuthenticatedRequest).userId;
-  const className = typeof req.body?.className === "string" ? req.body.className.trim() : "";
-  if (!className) {
-    res.status(400).json({ error: "className is required" });
-    return;
+async function ensureAutoContext(clerkUserId: string) {
+  const existing = await db.select().from(schoolChildren).where(eq(schoolChildren.clerkUserId, clerkUserId)).limit(1);
+  try {
+    const context = await inferSchoolContext(clerkUserId);
+    if (context) {
+      const [child] = existing[0]
+        ? await db.update(schoolChildren).set(context).where(eq(schoolChildren.id, existing[0].id)).returning()
+        : await db.insert(schoolChildren).values({ clerkUserId, slug: "school", ...context }).returning();
+      return child;
+    }
+  } catch {
+    // A missing or partially granted Google connection should not block the app.
   }
-
-  const existing = await db
-    .select({ id: schoolChildren.id, slug: schoolChildren.slug })
-    .from(schoolChildren)
-    .where(eq(schoolChildren.clerkUserId, clerkUserId))
-    .orderBy(asc(schoolChildren.id))
-    .limit(1);
-  const context = {
+  if (existing[0]) return existing[0];
+  const [fallback] = await db.insert(schoolChildren).values({
+    clerkUserId,
+    slug: "school",
     name: "School",
-    grade: "School",
-    className,
+    grade: "Connected school",
+    className: "Connected school sources",
     school: "Connected school sources",
-    subjects: [] as string[],
-    updatedAt: new Date(),
-  };
-  const [child] = existing[0]
-    ? await db.update(schoolChildren).set(context).where(eq(schoolChildren.id, existing[0].id)).returning()
-    : await db.insert(schoolChildren).values({
-      clerkUserId,
-      slug: "school",
-      ...context,
-    }).returning();
-  res.status(201).json({ context: { ...child, id: String(child.id) } });
-});
+    subjects: [],
+  }).returning();
+  return fallback;
+}
 
 router.post("/family/tasks", requireAuth, async (req, res) => {
   const clerkUserId = (req as AuthenticatedRequest).userId;
@@ -135,8 +140,10 @@ router.get("/family", requireAuth, async (req, res) => {
       status,
       detail,
       lastSync,
-    }).onConflictDoNothing({
+    }).onConflictDoUpdate({
       target: [schoolSources.clerkUserId, schoolSources.sourceKey],
+      // Preserve live connection status and last-sync metadata from OAuth/sync routes.
+      set: { name, updatedAt: new Date() },
     }),
   ));
 

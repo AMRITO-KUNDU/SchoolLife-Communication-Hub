@@ -102,10 +102,9 @@ function DashboardApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [toast, setToast] = useState<string | null>(null);
-  const [modal, setModal] = useState<'science' | 'whatsapp' | 'onboarding' | 'privacy' | null>(null);
+  const [modal, setModal] = useState<'science' | 'whatsapp' | 'privacy' | null>(null);
   const [detailTask, setDetailTask] = useState<Task | null>(null);
   const [detailEvent, setDetailEvent] = useState<EventItem | null>(null);
-  const [onboardingStep, setOnboardingStep] = useState(0);
   const [inboxFilter, setInboxFilter] = useState('All');
   const [planFilter, setPlanFilter] = useState('All');
   const [planTab, setPlanTab] = useState('Today');
@@ -126,8 +125,7 @@ function DashboardApp() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const justConnectedGoogle = params.get('connected') === 'google';
-    if (justConnectedGoogle) {
+    if (params.get('connected') === 'google') {
       notify('Google connected');
       params.delete('connected');
       const newQuery = params.toString();
@@ -139,10 +137,8 @@ function DashboardApp() {
         await loadFamily();
         // Once Google is connected, populate the workspace from live providers
         // without asking the parent to configure a class manually.
-        if (justConnectedGoogle) {
-          void syncGmail();
-          void syncCalendar();
-        }
+        void syncGmail(true);
+        void syncCalendar(true);
       } catch {
         notify('Your school data could not be loaded');
       } finally {
@@ -175,7 +171,7 @@ function DashboardApp() {
     setSources(payload.sources ?? []);
   };
 
-  const syncCalendar = async () => {
+  const syncCalendar = async (silent = false) => {
     setCalendarSyncing(true);
     try {
       const response = await fetch(apiUrl('/api/calendar/audit'), { credentials: 'include' });
@@ -199,14 +195,14 @@ function DashboardApp() {
       });
       setCalendarEvents(liveEvents);
       setSources((current) => current.map((source) => source.id === 'calendar' ? { ...source, status: 'Connected', detail: `${liveEvents.length} events synced`, lastSync: 'Synced just now' } : source));
-      notify(liveEvents.length > 0 ? `${liveEvents.length} Google Calendar events synced` : 'Google Calendar is connected');
+      if (!silent) notify(liveEvents.length > 0 ? `${liveEvents.length} Google Calendar events synced` : 'Google Calendar is connected');
     } catch {
-      notify('Calendar sync needs attention');
+      if (!silent) notify('Calendar sync needs attention');
     } finally {
       setCalendarSyncing(false);
     }
   };
-  const syncGmail = async () => {
+  const syncGmail = async (silent = false) => {
     setGmailSyncing(true);
     try {
       const response = await fetch(apiUrl('/api/gmail/messages?pageSize=30'), { credentials: 'include' });
@@ -225,9 +221,9 @@ function DashboardApp() {
       } satisfies Message));
       setInboxMessages(liveMessages);
       setSources((current) => current.map((source) => source.id === 'email' ? { ...source, status: 'Connected', detail: `${liveMessages.length} recent emails`, lastSync: 'Synced just now' } : source));
-      notify(liveMessages.length > 0 ? `${liveMessages.length} Gmail threads synced` : 'Gmail is connected');
+      if (!silent) notify(liveMessages.length > 0 ? `${liveMessages.length} Gmail threads synced` : 'Gmail is connected');
     } catch {
-      notify('Gmail sync needs attention');
+      if (!silent) notify('Gmail sync needs attention');
     } finally {
       setGmailSyncing(false);
     }
@@ -316,18 +312,6 @@ function DashboardApp() {
     notify('WhatsApp group selection saved');
   };
 
-  const saveSchoolContext = async (context: { className: string }) => {
-    const response = await fetch(apiUrl('/api/family/context'), {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(context),
-    });
-    if (!response.ok) throw new Error('School context could not be saved');
-    await loadFamily();
-    notify('Class context saved');
-  };
-
   const addExtractedTasks = async (extraction: ExtractionResult, message: Message | null) => {
     const childId = message?.childId || schoolContext?.id || 'unassigned';
     const responses = await Promise.all(extraction.tasks.map((task) => fetch(apiUrl('/api/family/tasks'), {
@@ -347,7 +331,7 @@ function DashboardApp() {
     if (view === 'calendar') return <CalendarView childrenData={schoolContext ? [schoolContext] : []} eventsData={calendarEvents} checkpoints={calendarCheckpoints} auditedAt={calendarAuditedAt} onAudit={syncCalendar} mode={calendarMode} setMode={setCalendarMode} child="all" setChild={() => {}} onOpenEvent={setDetailEvent} />;
     if (view === 'inbox') return <InboxView messagesData={inboxMessages} gmailSyncing={gmailSyncing} onSyncGmail={syncGmail} filter={inboxFilter} setFilter={setInboxFilter} onOpenScience={(message) => { setSelectedMessage(message); setModal('science'); }} onAddTask={addTask} />;
     if (view === 'sources') return <SourcesView sources={sources} setSources={setSources} onSyncCalendar={syncCalendar} calendarSyncing={calendarSyncing} onSyncGmail={syncGmail} gmailSyncing={gmailSyncing} onNotify={notify} refreshFamily={loadFamily} />;
-    return <SettingsView user={user ?? null} onNotify={notify} onOpenPrivacy={() => setModal('privacy')} onSources={() => setView('sources')} onContextSetup={() => { setOnboardingStep(0); setModal('onboarding'); }} />;
+    return <SettingsView user={user ?? null} onNotify={notify} onOpenPrivacy={() => setModal('privacy')} onSources={() => setView('sources')} />;
   }, [calendarAuditedAt, calendarCheckpoints, calendarMode, gmailSyncing, inboxFilter, inboxMessages, planFilter, planTab, schoolContext, sources, tasks, user, view]);
 
   return familyLoading ? <LoadingScreen /> : (
@@ -369,7 +353,6 @@ function DashboardApp() {
       {modal === 'science' && <ExtractionModal message={selectedMessage} onClose={() => setModal(null)} onAdd={async (extraction) => { await addExtractedTasks(extraction, selectedMessage); setModal(null); }} />}
       {modal === 'whatsapp' && <WhatsAppModal status={whatsappStatus} qrDataUrl={whatsappQr} pairingCode={whatsappPairingCode} groups={whatsappGroups} loading={whatsappLoading} onConnect={connectWhatsapp} onToggle={toggleWhatsappGroup} onClose={() => setModal(null)} onSave={() => { setModal(null); notify(`${whatsappGroups.filter((group) => group.enabled).length} WhatsApp groups connected`); }} />}
       {modal === 'privacy' && <PrivacyModal onClose={() => setModal(null)} onNotify={notify} />}
-      {modal === 'onboarding' && <SchoolContextModal step={onboardingStep} setStep={setOnboardingStep} onClose={() => setModal(null)} onFinish={async (context) => { await saveSchoolContext(context); setModal(null); }} />}
       {toast && <div className="sl-toast" data-testid="status-toast"><CheckCircle2 size={17} /> {toast}</div>}
     </div>
   );
@@ -488,10 +471,10 @@ function SourcesView({ sources, setSources, onSyncCalendar, calendarSyncing, onS
   return <div><PageHeader eyebrow="Your connections" title="Sources" description="Connect the places your school information actually arrives. Nothing is marked connected until a live sync succeeds." action={<button className="sl-primary-button" data-testid="button-sync-all" onClick={() => { onSyncCalendar(); onSyncGmail(); }}><RefreshCw size={15} /> Sync connected</button>} /><div className="sl-trust-banner"><span className="sl-trust-icon"><ShieldCheck size={19} /></span><div><strong>You control what SchoolLife can access.</strong><p>Only the records returned by an approved connection are stored in your family plan.</p></div><button data-testid="button-source-permissions" onClick={() => onNotify('Permissions are managed by the connected provider')}>Manage permissions</button></div><div className="sl-source-list">{sources.map((source) => <div className="sl-source-row" key={source.id} data-testid={`row-source-${source.id}`}><span className={`sl-source-logo source-${source.id}`}>{source.id === 'email' ? <Mail size={19} /> : source.id === 'whatsapp' ? <MessageCircle size={19} /> : source.id === 'calendar' ? <CalendarDays size={19} /> : <FileText size={19} />}</span><div className="sl-source-info"><strong>{source.name}</strong><span>{source.id === 'whatsapp' ? 'WhatsApp integration is coming soon' : source.detail}</span><small>{source.id === 'whatsapp' ? 'Not yet available' : source.lastSync}</small></div><span className={`sl-connected ${source.status === 'Connected' && source.id !== 'whatsapp' ? 'yes' : ''} ${source.id === 'whatsapp' ? 'soon' : ''}`}><span></span>{source.id === 'whatsapp' ? 'Coming soon' : source.status}</span>{source.id === 'whatsapp' ? <button className="sl-secondary-button compact" data-testid="button-manage-whatsapp" disabled title="WhatsApp integration is coming soon" onClick={() => onNotify('WhatsApp integration is coming soon')}>Coming soon</button> : <button className="sl-secondary-button compact" data-testid={`button-source-sync-${source.id}`} onClick={() => syncSource(source)} disabled={(calendarSyncing && source.id === 'calendar') || (gmailSyncing && source.id === 'email')}>{(calendarSyncing && source.id === 'calendar') || (gmailSyncing && source.id === 'email') ? 'Syncing…' : source.status === 'Connected' ? 'Sync now' : 'Connect & sync'}</button>}{source.status === 'Connected' && source.id !== 'whatsapp' && <button className="sl-source-sync" data-testid={`button-sync-${source.id}`} onClick={() => syncSource(source)}><RefreshCw size={15} className={(calendarSyncing && source.id === 'calendar') || (gmailSyncing && source.id === 'email') ? 'sl-spin' : ''} /></button>}</div>)}</div><div className="sl-docs-note"><Paperclip size={16} /><span><strong>More sources</strong> will appear here as they are connected. WhatsApp support is on the way — we'll let you know as soon as it's ready.</span></div></div>;
 }
 
-function SettingsView({ user, onNotify, onOpenPrivacy, onSources, onContextSetup }: { user: { firstName?: string | null; lastName?: string | null; primaryEmailAddress?: { emailAddress: string } | null } | null; onNotify: (msg: string) => void; onOpenPrivacy: () => void; onSources: () => void; onContextSetup: () => void }) {
+function SettingsView({ user, onNotify, onOpenPrivacy, onSources }: { user: { firstName?: string | null; lastName?: string | null; primaryEmailAddress?: { emailAddress: string } | null } | null; onNotify: (msg: string) => void; onOpenPrivacy: () => void; onSources: () => void }) {
   const name = [user?.firstName, user?.lastName].filter(Boolean).join(' ') || 'Your account';
   const email = user?.primaryEmailAddress?.emailAddress || 'Email managed by Clerk';
-  return <div><PageHeader eyebrow="Your account" title="Account" description="Manage your identity, connected sources, automatic school context, and privacy." /><div className="sl-settings-layout"><div className="sl-settings-nav">{['Profile', 'Connected Sources', 'Privacy', 'AI Preferences'].map((item, index) => <button key={item} className={index === 0 ? 'active' : ''} data-testid={`button-settings-${item.toLowerCase().replace(' ', '-')}`} onClick={() => item === 'Connected Sources' ? onSources() : item === 'Privacy' ? onOpenPrivacy() : onNotify(`${item} settings are ready to customise`)}>{item}<ChevronRight size={15} /></button>)}</div><section className="sl-settings-content"><div className="sl-settings-card"><div className="sl-settings-heading"><span className="sl-avatar avatar-sanjay">{name.slice(0, 2).toUpperCase()}</span><div><h2>{name}</h2><p>{email}</p><small>Signed in securely with Clerk</small></div><button className="sl-secondary-button compact" data-testid="button-edit-account" onClick={() => onNotify('Edit your name and email in your Clerk profile')}>Edit</button></div></div><div className="sl-settings-card"><div className="sl-eyebrow">Connections</div><h2>One inbox for school information</h2><p>Connect Gmail, Google Calendar, WhatsApp, and supported school sources from one place.</p><div className="sl-setting-actions"><button data-testid="button-account-sources" onClick={onSources}><Zap size={15} /> Manage connected sources</button><button data-testid="button-account-refresh" onClick={() => onNotify('Connected source status is shown in Sources')}><RefreshCw size={15} /> Check connection status</button></div></div><div className="sl-settings-card"><div className="sl-eyebrow">Automatic context</div><h2>School details update from Google</h2><p>SchoolLife identifies classes and school groups from your approved Gmail and Google Classroom data. You can override the detected class if needed.</p><button className="sl-secondary-button" data-testid="button-run-onboarding" onClick={onContextSetup}>Override detected class <ChevronRight size={15} /></button></div><div className="sl-settings-card"><div className="sl-eyebrow">Privacy</div><h2>You control your data</h2><p>Only records from connections you approve are processed. Review the source trail on each item before acting.</p><div className="sl-setting-actions"><button data-testid="button-manage-permissions" onClick={onOpenPrivacy}><ShieldCheck size={15} /> Manage permissions</button><button data-testid="button-delete-data" onClick={() => onNotify('Data deletion is available from the privacy controls')}><Trash2 size={15} /> Delete processed data</button></div></div></section></div></div>;
+  return <div><PageHeader eyebrow="Your account" title="Account" description="Manage your identity, connected sources, automatic school context, and privacy." /><div className="sl-settings-layout"><div className="sl-settings-nav">{['Profile', 'Connected Sources', 'Privacy', 'AI Preferences'].map((item, index) => <button key={item} className={index === 0 ? 'active' : ''} data-testid={`button-settings-${item.toLowerCase().replace(' ', '-')}`} onClick={() => item === 'Connected Sources' ? onSources() : item === 'Privacy' ? onOpenPrivacy() : onNotify(`${item} settings are ready to customise`)}>{item}<ChevronRight size={15} /></button>)}</div><section className="sl-settings-content"><div className="sl-settings-card"><div className="sl-settings-heading"><span className="sl-avatar avatar-sanjay">{name.slice(0, 2).toUpperCase()}</span><div><h2>{name}</h2><p>{email}</p><small>Signed in securely with Clerk</small></div><button className="sl-secondary-button compact" data-testid="button-edit-account" onClick={() => onNotify('Edit your name and email in your Clerk profile')}>Edit</button></div></div><div className="sl-settings-card"><div className="sl-eyebrow">Connections</div><h2>One inbox for school information</h2><p>Connect Gmail, Google Calendar, WhatsApp, and supported school sources from one place.</p><div className="sl-setting-actions"><button data-testid="button-account-sources" onClick={onSources}><Zap size={15} /> Manage connected sources</button><button data-testid="button-account-refresh" onClick={() => onNotify('Connected source status is shown in Sources')}><RefreshCw size={15} /> Check connection status</button></div></div><div className="sl-settings-card"><div className="sl-eyebrow">Privacy</div><h2>You control your data</h2><p>Only records from connections you approve are processed. Review the source trail on each item before acting.</p><div className="sl-setting-actions"><button data-testid="button-manage-permissions" onClick={onOpenPrivacy}><ShieldCheck size={15} /> Manage permissions</button><button data-testid="button-delete-data" onClick={() => onNotify('Data deletion is available from the privacy controls')}><Trash2 size={15} /> Delete processed data</button></div></div></section></div></div>;
 }
 
 function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) {
@@ -544,28 +527,6 @@ function WhatsAppModal({ status, qrDataUrl, pairingCode, groups, loading, onConn
 
 function PrivacyModal({ onClose, onNotify }: { onClose: () => void; onNotify: (msg: string) => void }) {
   return <Overlay onClose={onClose}><div className="sl-privacy-modal"><div className="sl-trust-icon large"><ShieldCheck size={22} /></div><div className="sl-modal-eyebrow">Your privacy</div><h2>You control your data.</h2><p>SchoolLife is designed around your permission. Your sources stay yours, and every processed item can be removed from this device.</p><div className="sl-privacy-points"><span><CheckCircle2 size={15} /> Choose exactly which sources to connect</span><span><CheckCircle2 size={15} /> Review what SchoolLife understood</span><span><CheckCircle2 size={15} /> Delete processed data whenever you like</span></div><button className="sl-primary-button full" data-testid="button-privacy-done" onClick={() => { onClose(); onNotify('Your privacy settings are unchanged'); }}>Done</button></div></Overlay>;
-}
-
-function SchoolContextModal({ step, setStep, onClose, onFinish }: { step: number; setStep: (step: number) => void; onClose: () => void; onFinish: (context: { className: string }) => Promise<void> }) {
-  const [form, setForm] = useState({ className: '' });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const submit = async () => {
-    if (!form.className.trim()) {
-      setError('Please enter your class or school group.');
-      return;
-    }
-    setSaving(true);
-    try {
-      await onFinish({ className: form.className.trim() });
-    } catch {
-      setError('We could not save this school context. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-  const field = (key: keyof typeof form, placeholder: string) => <input className="sl-input" placeholder={placeholder} value={form[key]} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />;
-  return <Overlay onClose={onClose}><div className="sl-onboarding-modal">{step === 0 ? <><div className="sl-onboarding-mark"><Sparkles size={22} /></div><div className="sl-modal-eyebrow">A calmer school week</div><h2>Set up your school inbox.</h2><p>Tell SchoolLife which class or school group to look for. School details will come from the connected sources you approve.</p><div className="sl-onboarding-lines"><span><Check size={14} /> Your data stays tied to your account</span><span><Check size={14} /> Nothing is created from sample data</span></div><button className="sl-primary-button full" data-testid="button-get-started" onClick={() => setStep(1)}>Set class context <ChevronRight size={16} /></button></> : <><div className="sl-modal-eyebrow">School context</div><h2>Which class or group should we organize?</h2><p>Use a class name, section, or school group such as “6A” or “Primary announcements”.</p><div className="sl-onboarding-fields">{field('className', 'Class or school group')}</div>{error && <p className="sl-form-error">{error}</p>}<button className="sl-primary-button full" data-testid="button-finish-setup" disabled={saving} onClick={() => void submit()}>{saving ? 'Saving…' : 'Save context and continue'} <ChevronRight size={16} /></button></>}</div></Overlay>;
 }
 
 function Landing() {
